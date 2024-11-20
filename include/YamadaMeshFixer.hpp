@@ -16,8 +16,8 @@
 #include <cstdlib>
 #include <exception>
 
+#include "SpdlogDef.hpp"
 #include <spdlog/spdlog.h>
-#define SPDLOG_ACTIVE_LEVEL SPDLOG_LEVEL_TRACE
 
 #include "tiny_obj_loader.h"
 
@@ -127,20 +127,22 @@ namespace YamadaMeshFixer{
         }
     };
 
+    struct Entity{};
+
     struct Vertex;
     struct HalfEdge;
     struct Edge;
     struct Loop;
     struct Face;
     struct Solid;
-    struct Entity;
 
     struct Vertex: public Entity{
         Coordinate pointCoord;
     };
 
     struct HalfEdge: public Entity{
-        bool sense;
+        // false: 与edge一致, true: 不一致
+        bool sense; 
         std::shared_ptr<HalfEdge> partner;
         std::shared_ptr<Loop> loop;
         std::shared_ptr<HalfEdge> pre, next;
@@ -158,14 +160,12 @@ namespace YamadaMeshFixer{
 
     struct Face: public Entity{
         std::shared_ptr<Loop> st;
-        std::shared_ptr<Loop> solid;
+        std::shared_ptr<Solid> solid;
     };
 
     struct Solid: public Entity{
-        std::vector<std::shared_ptr<Loop>> faces;
+        std::vector<std::shared_ptr<Face>> faces;
     };
-
-    struct Entity{};
 
     struct ObjInfo{
         std::vector<float> vertices;
@@ -231,6 +231,9 @@ namespace YamadaMeshFixer{
 
     struct MarkNum{
 
+    public:
+
+        int entityCount;
         int solidCount;
         int faceCount;
         int loopCount;
@@ -241,21 +244,139 @@ namespace YamadaMeshFixer{
         std::map<Entity*, std::pair<std::string, int>> markNumMap;
         std::map<Entity*, int> solidMap;
 
+        std::vector<std::shared_ptr<Solid>> solids;
+
+        // 单例
         static MarkNum& GetInstance(){
             static MarkNum marknum_instance;
             return marknum_instance;
         }
 
-        // 构造
-        void Init(ObjInfo& obj_info){
+        // 由ObjInfo加载半边数据结构
+        void LoadFromObjInfo(ObjInfo& obj_info){
+            SPDLOG_INFO("Start.");
+
             Clear();
 
             // 顶点
+            std::vector<std::shared_ptr<Vertex>> vertex_ptrs;
+
             for(int i=0,j=0;i<obj_info.vertices.size();i+=3, j+=1){
                 auto vertex_ptr = std::make_shared<Vertex>();
+                UpdateMarkNumMap(vertex_ptr);
                 vertex_ptr->pointCoord = obj_info.GetPoint(j);
-                markNumMap[vertex_ptr.get()] = {"Vertex", ++vertexCount};
+
+                vertex_ptrs.emplace_back(vertex_ptr);
             }
+
+            std::map<std::pair<int, int>, std::shared_ptr<Edge>> edges_map;
+            auto make_edge = [&](int i, int j) -> std::shared_ptr<Edge> {
+                
+                // 注意：这里只有map的key是需要保证有序的，而下面构造edge的时候会用到原始顺序的索引，因此这里要单独使用变量保存key
+                int search_i = i;
+                int search_j = j;
+
+                if(search_i>search_j){
+                    std::swap(search_i,search_j);
+                }
+
+                // 不存在：创建新边
+                if(auto it = edges_map.find({search_i,search_j}); it == edges_map.end()){
+                    std::shared_ptr<Edge> edge_ptr = std::make_shared<Edge>();
+                    UpdateMarkNumMap(edge_ptr);
+
+                    // 初始化边的信息（到时候可能要挪到函数里面）
+                    // 此处必须使用原始顶点索引
+                    edge_ptr->st = vertex_ptrs[i];
+                    edge_ptr->ed = vertex_ptrs[j];
+
+                    edges_map[{search_i,search_j}] = edge_ptr;
+
+                    return edge_ptr;
+                }
+                // 存在：返回
+                else{
+                    return it->second;
+                }
+            };
+
+            auto make_halfedge = [&](int i, int j) -> std::shared_ptr<HalfEdge> {
+                auto edge_ptr = make_edge(i,j);
+                std::shared_ptr<HalfEdge> halfedge_ptr = std::make_shared<HalfEdge>();
+                UpdateMarkNumMap(halfedge_ptr);
+
+                // 更新sense
+                if(markNumMap[edge_ptr->st.get()].second == i && markNumMap[edge_ptr->ed.get()].second == j){
+                    halfedge_ptr->sense = false;
+                }else{
+                    halfedge_ptr->sense = true;
+                }
+                
+                // 添加此halfedge到edge的halfedgeList中，同时更新halfedgeList中已经有的halfedge的相邻关系
+                edge_ptr->halfEdges.emplace_back(halfedge_ptr);
+
+                // 按照halfedge添加顺序串成一个环
+                for(int h=0;h<edge_ptr->halfEdges.size();h++){
+                    edge_ptr->halfEdges[h]->partner = edge_ptr->halfEdges[(h+1) % edge_ptr->halfEdges.size()];
+                }
+
+                return halfedge_ptr;
+            };
+
+            auto make_loop = [&](const std::shared_ptr<HalfEdge>& a, const std::shared_ptr<HalfEdge>& b, const std::shared_ptr<HalfEdge>& c) -> std::shared_ptr<Loop>{
+
+                // set next & pre
+                a->next = b;
+                a->pre = c;
+
+                b->next = c;
+                b->pre = a;
+
+                c->next = a;
+                c->pre = b;
+
+                // make loop
+                std::shared_ptr<Loop> lp = std::make_shared<Loop>();
+                UpdateMarkNumMap(lp);
+                lp->st = a;
+
+                // set 
+                a->loop = lp;
+                b->loop = lp;
+                c->loop = lp;
+
+                return lp;
+            };
+
+            auto make_face = [&](const std::shared_ptr<Loop>& lp) -> std::shared_ptr<Face>{
+                // make face
+                std::shared_ptr<Face> f = std::make_shared<Face>();
+                UpdateMarkNumMap(f);
+
+                f->st = lp;
+
+                // set lp face
+                lp->face = f;
+
+                return f;
+            };
+
+            auto make_solid = [&](const std::vector<std::shared_ptr<Face>>& faces) -> std::shared_ptr<Solid>{
+
+                // make solid
+                std::shared_ptr<Solid> solid = std::make_shared<Solid>();
+                UpdateMarkNumMap(solid);
+
+                // update face solid
+                for(auto f: faces){
+                    f->solid = solid;
+                }
+
+                // copy faces vector
+                solid->faces = faces;
+
+                return solid;
+            };
 
             // 对于每个solid
             int s = 0;
@@ -263,33 +384,110 @@ namespace YamadaMeshFixer{
                 int range_begin = solid_range.first;
                 int range_end = solid_range.second;
 
-                for(int j = range_begin; j<range_end;j++){
+                std::vector<std::shared_ptr<Face>> faces;
+                // 对应solid的顶点范围: 每3个点的索引构成一个三角形
+                for(int i = range_begin; i<range_end; i+=3){
+                    int j = i+1;
+                    int k = i+2;
+
+                    int index_i = obj_info.indices[i];
+                    int index_j = obj_info.indices[j];
+                    int index_k = obj_info.indices[k];
+
+                    // half edge
+                    auto halfedge_ij = make_halfedge(index_i, index_j);
+                    auto halfedge_jk = make_halfedge(index_j, index_k);
+                    auto halfedge_ki = make_halfedge(index_k, index_i);
+
+                    // loop
+                    auto loop = make_loop(halfedge_ij, halfedge_jk, halfedge_ki);
                     
+                    // face
+                    auto face = make_face(loop);
+                    faces.emplace_back(face);
                 }
+
+                // solid
+                auto solid = make_solid(faces);
+                solids.emplace_back(solid);
 
                 s++;
             }
 
-            // for(int i=0;i<obj_info.indices.size();i+=3){
-            //     int j = i+1;
-            //     int k = i+2;
+            SPDLOG_INFO("End.");
+        }
 
-            //     int index_i = obj_info.indices[i];
-            //     int index_j = obj_info.indices[j];
-            //     int index_k = obj_info.indices[k];
-            // }
+        // 测试
+        void Test(){
+            SPDLOG_INFO("Start.");
+
+            SPDLOG_INFO("Entity Count: {}", entityCount);
+            SPDLOG_INFO("Solid Count: {}", solidCount);
+            SPDLOG_INFO("Face Count: {}", faceCount);
+            SPDLOG_INFO("Loop Count: {}", loopCount);
+            SPDLOG_INFO("HalfEdge Count: {}", halfedgeCount);
+            SPDLOG_INFO("Edge Count: {}", edgeCount);
+            SPDLOG_INFO("Vertex Count: {}", vertexCount);
+
+            SPDLOG_INFO("End.");
+        }
+
+        // TODO: 导出
+        void Export(){
         }
 
         void Clear(){
             markNumMap.clear();
             solidMap.clear();
+            solids.clear();
 
+            entityCount = 0;
             solidCount = 0;
             faceCount = 0;
             loopCount = 0;
             halfedgeCount = 0;
             edgeCount = 0;
             vertexCount = 0;
+        }
+
+    private:
+
+        // 由指针类型更新UpdateMarkNumMap
+        template<typename T>
+        void UpdateMarkNumMap(const std::shared_ptr<T> ptr){
+            std::string typeename;
+            int* counter_pointer;
+
+            if constexpr (std::is_same_v<T, Vertex>){
+                typeename = "Vertex";
+                counter_pointer = &vertexCount;
+            }
+            else if constexpr (std::is_same_v<T, HalfEdge>){
+                typeename = "HalfEdge";
+                counter_pointer = &halfedgeCount;
+            }
+            else if constexpr (std::is_same_v<T, Edge>){
+                typeename = "Edge";
+                counter_pointer = &edgeCount;
+            }
+            else if constexpr (std::is_same_v<T, Loop>){
+                typeename = "Loop";
+                counter_pointer = &loopCount;
+            }
+            else if constexpr (std::is_same_v<T, Face>){
+                typeename = "Edge";
+                counter_pointer = &edgeCount;    
+            }
+            else if constexpr (std::is_same_v<T, Solid>){
+                typeename = "Solid";
+                counter_pointer = &solidCount;    
+            }
+            else{
+                typeename = "Entity";
+                counter_pointer = &entityCount;
+            }
+
+            markNumMap[ptr.get()] = {typeename, (*counter_pointer)++};
         }
     };
 

@@ -17,6 +17,7 @@
 #include <chrono>
 #include <vector>
 
+#include "SpdlogDef.hpp"
 #include <spdlog/spdlog.h>
 
 namespace Timer
@@ -43,17 +44,17 @@ namespace Timer
         }
 
         void PrintTimes(){
-            spdlog::info("===== {} =====", std::string("Timer"));
+            SPDLOG_INFO("===== {} =====", std::string("Timer"));
 
             for(auto p: split_vec){
-                spdlog::info("{}: \t{:.6}", p.first, GetSeconds(p.second));
+                SPDLOG_INFO("{}: \t{:.6}", p.first, GetSeconds(p.second));
             }
 
             MyClockType now_time = std::chrono::high_resolution_clock::now();
             double now_sec = GetSeconds(now_time);
-            spdlog::info("Total: {:.6}", now_sec);
+            SPDLOG_INFO("Total: {:.6}", now_sec);
 
-            spdlog::info("===== {} =====", std::string("Timer End"));
+            SPDLOG_INFO("===== {} =====", std::string("Timer End"));
         }
 
     private:

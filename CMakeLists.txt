@@ -17,10 +17,16 @@ set (targetName YamadaMeshFixer)
 
 # Include directories
 include_directories(${spdlog_INCLUDE_DIRS})
-include_directories(./include)
+include(
+    ./include/SpdlogDef.hpp
+)
+include_directories(
+    ./include
+)
 
 file(GLOB SOURCES "src/*.cpp" "include/*.cpp")
 
+add_compile_definitions(SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_TRACE)
 add_executable (${targetName} ${SOURCES})
 target_compile_definitions(${targetName} PRIVATE _USE_MATH_DEFINES)
 target_link_libraries(${targetName} spdlog::spdlog)

@@ -42,19 +42,15 @@ int main(int argc, char const *argv[]){
     SPDLOG_TRACE("Test: {}", 456);
     SPDLOG_INFO("Test: {}", 123);
 
-#if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_TRACE
-    std::cout<<"1111"<<std::endl;
-#endif
-
     // TODO: load obj
-    // YamadaMeshFixer::ObjInfo obj_info;
-    // obj_info.LoadFromObj(input_args.file_path);
+    YamadaMeshFixer::ObjInfo obj_info;
+    obj_info.LoadFromObj(input_args.file_path);
 
-    // YamadaMeshFixer::MarkNum m;
-    // m.LoadFromObjInfo(obj_info);
+    YamadaMeshFixer::MarkNum m;
+    m.LoadFromObjInfo(obj_info);
 
-    // // TODO: test obj
-    // m.Test();
+    // TODO: test obj
+    m.Test();
 
 
     return 0;

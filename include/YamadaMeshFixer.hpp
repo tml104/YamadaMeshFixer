@@ -9,6 +9,7 @@
 #include <unordered_map>
 #include <memory>
 #include <algorithm>
+#include <functional>
 
 #include <iostream>
 #include <fstream>
@@ -24,8 +25,17 @@
 
 namespace YamadaMeshFixer{
 
-    using T_NUM = float;
+
+    using T_NUM = double;
     const T_NUM GLOBAL_TOLERANCE = 1e-6;
+
+    const T_NUM EPSLION1 = 0.05;
+    const T_NUM EPSLION2 = cos(M_PI / 6);
+
+    const T_NUM EPSLION2_SIN = sqrt(1.0 - EPSLION2 * EPSLION2);
+
+  	const T_NUM MINVAL = -1e9;
+	const T_NUM MAXVAL = 1e9;
 
     struct Coordinate{
         T_NUM coords[3];
@@ -125,6 +135,49 @@ namespace YamadaMeshFixer{
                 coords[0]*other_coord[1] - coords[1]*other_coord[0]
             );
         }
+
+        Coordinate Min(const Coordinate& other_coord) const {
+            return Coordinate(
+                std::min(coords[0], other_coord[0]),
+                std::min(coords[1], other_coord[1]),
+                std::min(coords[2], other_coord[2])
+            );
+        }
+
+        Coordinate Max(const Coordinate& other_coord) const {
+            return Coordinate(
+                std::max(coords[0], other_coord[0]),
+                std::max(coords[1], other_coord[1]),
+                std::max(coords[2], other_coord[2])
+            );
+        }
+
+        T_NUM Distance(const Coordinate& other_coord) const {
+            T_NUM dis = 0.0;
+            for(int i=0;i<3;i++){
+                dis += (coords[i] - other_coord[i]) * (coords[i] - other_coord[i]);
+            }
+
+            return sqrt(dis);
+        }
+
+        T_NUM Length() const {
+            T_NUM length = 0.0;
+
+            for(int i=0;i<3;i++){
+                length += (coords[i] * coords[i]);
+            }
+
+            return sqrt(length);
+        }
+
+        void Normalize(){
+            T_NUM length = Length();
+
+            for(int i=0;i<3;i++){
+                coords[i] /= length;
+            }
+        }
     };
 
     struct Entity{};
@@ -146,6 +199,15 @@ namespace YamadaMeshFixer{
         std::shared_ptr<HalfEdge> partner;
         std::shared_ptr<Loop> loop;
         std::shared_ptr<HalfEdge> pre, next;
+        std::shared_ptr<Edge> edge;
+
+        std::shared_ptr<Vertex> GetStart() const {
+            return sense?(edge->ed):(edge->st);
+        }
+
+        std::shared_ptr<Vertex> GetEnd() const {
+            return sense?(edge->st):(edge->ed);
+        }
     };
 
     struct Edge: public Entity{
@@ -304,6 +366,9 @@ namespace YamadaMeshFixer{
                 auto edge_ptr = make_edge(i,j);
                 std::shared_ptr<HalfEdge> halfedge_ptr = std::make_shared<HalfEdge>();
                 UpdateMarkNumMap(halfedge_ptr);
+
+                // 更新halfedge的edge
+                halfedge_ptr->edge = edge_ptr;
 
                 // 更新sense
                 if(markNumMap[edge_ptr->st.get()].second == i && markNumMap[edge_ptr->ed.get()].second == j){
@@ -475,8 +540,8 @@ namespace YamadaMeshFixer{
                 counter_pointer = &loopCount;
             }
             else if constexpr (std::is_same_v<T, Face>){
-                typeename = "Edge";
-                counter_pointer = &edgeCount;    
+                typeename = "Face";
+                counter_pointer = &faceCount;    
             }
             else if constexpr (std::is_same_v<T, Solid>){
                 typeename = "Solid";
@@ -491,4 +556,235 @@ namespace YamadaMeshFixer{
         }
     };
 
+
+    struct PoorCoedge{
+        std::shared_ptr<HalfEdge> halfEdge;
+        Coordinate midPoint;
+
+        // 计算与给定PoorCoedge的匹配分数
+        // 这里和brep中的计算可能不太一样?
+        double CalculateScore(const PoorCoedge& other_poor_coedge) const {
+            double score = 0.0;
+           	bool valid_flag = true;
+            
+            T_NUM distance = 0.0;
+
+            // 中点
+            distance = midPoint.Distance(other_poor_coedge.midPoint);
+            if(distance > EPSLION1) {valid_flag = false;}
+            score += distance;
+
+            // 起始点 与 终点 距离
+            distance = halfEdge->GetStart()->pointCoord.Distance(other_poor_coedge.halfEdge->GetEnd()->pointCoord);
+            if(distance > EPSLION1) {valid_flag = false;}
+            score += distance;
+
+            // 终点 与 起始点 距离
+            distance = halfEdge->GetEnd()->pointCoord.Distance(other_poor_coedge.halfEdge->GetStart()->pointCoord);
+            if(distance > EPSLION1) {valid_flag = false;}
+            score += distance;
+
+            // 对距离：归一化后计算平均分数（此时应该是一个小于1的数值），然后加权
+            score /= EPSLION1;
+            score /= 3;
+            
+            // 计算方向向量所构成之夹角
+
+            auto vec1 = (halfEdge->GetStart()->pointCoord - halfEdge->GetEnd()->pointCoord);
+            auto vec2 = (other_poor_coedge.halfEdge->GetStart()->pointCoord - other_poor_coedge.halfEdge->GetEnd()->pointCoord);
+            vec1.Normalize();
+            vec2.Normalize();
+
+            double dot_result = vec1.Dot(vec2);
+
+            if(dot_result > 0){
+                valid_flag = false;
+            }
+            else{
+            	dot_result = -dot_result;
+                if(dot_result < EPSLION2){
+                    valid_flag = false;
+                }
+            }
+
+            if(valid_flag){
+                return score;
+            }
+
+            return -1.0;
+        }
+    };
+
+    struct MatchTree{
+
+        struct MatchTreeNode{
+            Coordinate minRangePoint;
+            Coordinate maxRangePoint;
+
+            MatchTreeNode* leftNode;
+            MatchTreeNode* rightNode;
+
+            int splitDim;
+            bool isLeaf;
+            PoorCoedge leafPoorCoedge;
+
+            MatchTreeNode(): leftNode(nullptr), rightNode(nullptr), splitDim(-1), isLeaf(false), leafPoorCoedge(){
+                for(int i=0;i<3;i++){
+                    minRangePoint[i] = MAXVAL;
+                    maxRangePoint[i] = MINVAL;
+                }
+            }
+
+            ~MatchTreeNode(){
+                if(leftNode){
+                    delete leftNode;
+                    leftNode = nullptr;
+                }
+
+                if(rightNode){
+                    delete rightNode;
+                    rightNode = nullptr;
+                }
+            }
+        };
+
+        MatchTreeNode* root;
+
+        MatchTree(): root(nullptr){}
+
+        ~MatchTree(){
+            if(this->root){
+                delete root;
+            }
+            root = nullptr;
+        }
+
+		void ConstructTree(std::vector<PoorCoedge>& poor_coedge_vec){
+            
+            // 叶子节点
+            auto update_leaf_node = [&](PoorCoedge leaf_coedge, int now_dim)->MatchTree::MatchTreeNode * {
+                MatchTree::MatchTreeNode *node = new MatchTree::MatchTreeNode();
+
+                node->isLeaf = true;
+                node->leafPoorCoedge = leaf_coedge; // 复制poorCoedge
+                node->splitDim = now_dim;
+    
+                // boundary is set to midpoint
+                // for (int i = 0; i < 3; i++)
+                // {
+                //     node->minRangePoint[i] = leaf_coedge.midPoint[i];
+                //     node->maxRangePoint[i] = leaf_coedge.midPoint[i];
+                // }
+                node->minRangePoint = leaf_coedge.midPoint;
+                node->maxRangePoint = leaf_coedge.midPoint;
+
+                return node;
+            };
+
+            // 非叶子节点
+            auto update_now_node = [&] (MatchTree::MatchTreeNode *left, MatchTree::MatchTreeNode *right, int now_dim) -> MatchTree::MatchTreeNode* {
+                MatchTree::MatchTreeNode* node = new MatchTree::MatchTreeNode();
+                node->splitDim = now_dim;
+
+                if(left){
+                    node->minRangePoint = node->minRangePoint.Min(left->minRangePoint);
+                    node->maxRangePoint = node->maxRangePoint.Max(left->maxRangePoint);
+                    node->leftNode = left;
+                }
+
+                if(right){
+                    node->minRangePoint = node->minRangePoint.Min(right->minRangePoint);
+                    node->maxRangePoint = node->maxRangePoint.Max(right->maxRangePoint);
+                    node->rightNode = right;
+                }
+
+                return node;
+            };
+
+            // 递归调用
+            std::function<MatchTree::MatchTreeNode*(std::vector<PoorCoedge>&, int, int, int)> recursive_construct = [&] (std::vector<PoorCoedge>& poor_coedge_vec, int now_dim, int l, int r) -> MatchTree::MatchTreeNode* {
+                if(l == r){
+                    return update_leaf_node(poor_coedge_vec[l], now_dim);
+                }
+
+                if(l>r){
+                    return nullptr;
+                }
+
+                int mid = (l+r)>>1;
+
+                // 利用nth_element划分poor_coedge_vec
+                std::nth_element(poor_coedge_vec.begin()+l, poor_coedge_vec.begin()+mid, poor_coedge_vec.begin()+r+1, [&](const PoorCoedge& a, const PoorCoedge& b){
+                    return a.midPoint[now_dim] < b.midPoint[now_dim];
+                });
+
+                MatchTree::MatchTreeNode* left_node = recursive_construct(poor_coedge_vec, (now_dim+1)%3, l, mid);
+                MatchTree::MatchTreeNode* right_node = recursive_construct(poor_coedge_vec, (now_dim+1)%3, mid+1, r);
+                
+
+                return update_now_node(left_node, right_node, now_dim);
+            };
+
+            this->root = recursive_construct(poor_coedge_vec, 0, 0, static_cast<int>(poor_coedge_vec.size())-1);
+        }
+
+		void DeleteTree(){
+            if(this->root){
+                delete this->root;
+            }
+            root = nullptr;
+
+            SPDLOG_INFO("DeleteTree Done.");
+        }
+
+        std::vector<std::pair<PoorCoedge, double>> Match(
+            PoorCoedge poor_coedge, 
+            const std::set<std::shared_ptr<HalfEdge>>& found_coedge_set, 
+            bool dont_stitch_coincident
+        ){
+            std::vector<std::pair<PoorCoedge, double>> match_res_vec;
+
+            // 检查子树是否符合剪枝条件。若应该剪枝则返回false
+            // 		注意这里的子树剪枝条件会根据EPSLION1放松一些
+            auto check_subtree_valid = [&] (MatchTree::MatchTreeNode *now_root) -> bool {
+
+                for(int i=0;i<3;i++){
+                    // 取反（下面是符合条件之内容）
+                    if(!(
+                        (now_root->minRangePoint[i] - EPSLION1 < poor_coedge.midPoint[i])
+                        &&
+                        ( poor_coedge.midPoint[i] < now_root->maxRangePoint[i] + EPSLION1 )
+                    )){
+                        return false;
+                    }
+                }
+
+                return true;
+            };
+
+            // 取得匹配分数
+            auto get_match_score = [&](MatchTree::MatchTreeNode* now_root) -> double {
+                // TODO:
+            };
+        }
+
+    };
+
+    struct StitchFixer{
+    public:
+        Solid &solid;
+
+        StitchFixer(Solid& solid): solid(solid){
+        }
+
+        bool Start(bool call_fix, bool dont_stitch_coincident){
+
+        }
+
+        void Clear(){
+
+        }
+
+    private:
+    };
 }

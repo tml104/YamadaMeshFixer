@@ -75,3 +75,5 @@ __pycache__/
 # Ignore file generation logs or any cache files
 *.log
 *.cache
+
+models/

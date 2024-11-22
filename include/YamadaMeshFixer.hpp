@@ -671,6 +671,8 @@ namespace YamadaMeshFixer{
         std::shared_ptr<HalfEdge> halfEdge;
         Coordinate midPoint;
 
+        PoorCoedge() {}
+
         PoorCoedge(const std::shared_ptr<HalfEdge>& halfEdge): halfEdge(halfEdge){
             midPoint = (halfEdge->GetStart()->pointCoord + halfEdge->GetEnd()->pointCoord) /2;
         }
@@ -1054,10 +1056,10 @@ namespace YamadaMeshFixer{
             // [Debug] 打印配对边信息
             for(auto poorCoedgePair: poorCoedgePairs){
                 SPDLOG_DEBUG("Match pair (coedge id pair) (edge id pair): ({}, {}) ({}, {})",
-                    MarkNum.GetInstance().GetId(poorCoedgePair.first.halfEdge),
-                    MarkNum.GetInstance().GetId(poorCoedgePair.second.halfEdge),
-                    MarkNum.GetInstance().GetId(poorCoedgePair.first.halfEdge->edge),
-                    MarkNum.GetInstance().GetId(poorCoedgePair.second.halfEdge->edge)
+                    MarkNum::GetInstance().GetId(poorCoedgePair.first.halfEdge),
+                    MarkNum::GetInstance().GetId(poorCoedgePair.second.halfEdge),
+                    MarkNum::GetInstance().GetId(poorCoedgePair.first.halfEdge->edge),
+                    MarkNum::GetInstance().GetId(poorCoedgePair.second.halfEdge->edge)
                 );
             }
         }

@@ -248,7 +248,6 @@ namespace YamadaMeshFixer{
         }
 
         bool GeometryCoincidentEdge(std::shared_ptr<Edge> e1, std::shared_ptr<Edge> e2){
-            // TODO
 
             if(e1==nullptr || e2==nullptr){
                 return false;
@@ -989,6 +988,10 @@ namespace YamadaMeshFixer{
 
     private:
 
+        /*
+            调用顺序：1
+            找破边，并保存到poor_coedge_vec中
+        */
         void FindPoorCoedge(){
             // 先临时弄成循环遍历那样？
 
@@ -1033,6 +1036,11 @@ namespace YamadaMeshFixer{
             SPDLOG_DEBUG("poor coedge total num: {}", static_cast<int>(poorCoedges.size()));
         }
 
+        /*
+            调用顺序：2
+            匹配每条边，并且构建KDTree进行加速
+            这个匹配是贪心地匹配的（也就是说一旦匹配成功就把它放进对应的found_coedge_set，后续不再参与匹配），可能之后要改一下
+        */
         void MatchPoorCoedge(){
             matchTree.ConstructTree(poorCoedges);
             for(auto poor_coedge: poorCoedges){
@@ -1055,7 +1063,7 @@ namespace YamadaMeshFixer{
 
             // [Debug] 打印配对边信息
             for(auto poorCoedgePair: poorCoedgePairs){
-                SPDLOG_DEBUG("Match pair (coedge id pair) (edge id pair): ({}, {}) ({}, {})",
+                SPDLOG_DEBUG("Match pair: (coedge id pair) (edge id pair): ({}, {}) ({}, {})",
                     MarkNum::GetInstance().GetId(poorCoedgePair.first.halfEdge),
                     MarkNum::GetInstance().GetId(poorCoedgePair.second.halfEdge),
                     MarkNum::GetInstance().GetId(poorCoedgePair.first.halfEdge->edge),
@@ -1064,12 +1072,214 @@ namespace YamadaMeshFixer{
             }
         }
 
+        /*
+            调用顺序：3
+            重排序
+        */
         void RearrangePoorCoedge(){
+            // 对 poorCoedgePairs 中的匹配边对进行重排序，使得其符合修复顺序
+            /*
+                按照如下顺序排序，然后放入poor_coedge_pair_vec2中
+                (1) 先缝合不会删边的
+                (2) 再缝合会删非已经匹配边（正常边，非匹配的独立缺边）的
+                (3) 最后全部缝合
+	        */
 
+            decltype(poorCoedgePairs) poor_coedge_pair_vec2;
+
+            // 对poor_coedge_pair_vec2部分重排序：poor_coedge_pair_vec2中保存的是（第一阶段重新排序后的）若干对(pair)已经配对的破边，现在根据破边的长度和对第一阶段重新排序中各个部分的配对破边做第二阶段排序
+            // （注意lr满足左闭右开）
+            auto partial_sort_for_poor_coedge_pair_vec2 = [&](decltype(poor_coedge_pair_vec2)& poor_coedge_pair_vec2, int l, int r) {
+                std::sort(
+                    poor_coedge_pair_vec2.begin() + l,
+                    poor_coedge_pair_vec2.begin() + r,
+                    [&](const std::pair<PoorCoedge, PoorCoedge>& pair_a, const std::pair<PoorCoedge, PoorCoedge>& pair_b) -> bool {
+                        double pair_a_score = pair_a.first.CalculateScore(pair_a.second);
+                        double pair_b_score = pair_b.first.CalculateScore(pair_b.second);
+
+                        return pair_a_score < pair_b_score; // 目前这个分数只和距离有关（距离越小越优先），因此这样就是让距离小的优先处理
+                    }
+                );
+            };
+
+            auto rearrange_poor_coedge_pairs = [&](decltype(poor_coedge_pair_vec2)& poor_coedge_pair_vec2){
+                // 标记向量：如果对应配对边组合被标记为true，则跳过它们，并且将它们从found_coedge_set集合中移除
+                std::vector<bool> poor_coedge_pair_vec_flag(poorCoedgePairs.size()); 
+
+                // (2.0) 警告交叉连接的情况
+                auto f2_0 = [&] (const std::pair<PoorCoedge, PoorCoedge>& poor_coedge_pair, const std::shared_ptr<Vertex>& v1, const std::shared_ptr<Vertex>& v2){
+                    // std::vector<EDGE*> edges = edges_data.FindEdgesBetweenVertices(v1, v2);
+                    auto edge = MarkNum::GetInstance().FindEdgeBetweenVertices(v1, v2);
+
+                    // 此判断排除这个交叉边和已配对边相同的情况（这个有啥必要吗？）
+                    if(edge && edge != poor_coedge_pair.first.halfEdge->edge && edge != poor_coedge_pair.second.halfEdge->edge){
+                        SPDLOG_WARN("(2.0) Warn: Connect between v0 v01 or v1 v11: (poor_coedge_pair.first.coedge: {}, edge: {}), (poor_coedge_pair.second.coedge: {}, edge: {}) (v1: {}, v2: {}, e: {})",
+                            MarkNum::GetInstance().GetId(poor_coedge_pair.first.halfEdge),
+                            MarkNum::GetInstance().GetId(poor_coedge_pair.first.halfEdge->edge),
+                            MarkNum::GetInstance().GetId(poor_coedge_pair.second.halfEdge),
+                            MarkNum::GetInstance().GetId(poor_coedge_pair.second.halfEdge->edge),
+                            MarkNum::GetInstance().GetId(v1),
+                            MarkNum::GetInstance().GetId(v2),
+                            MarkNum::GetInstance().GetId(edge)
+                        );
+                    }
+                };
+
+                for(int i=0;i<poorCoedgePairs.size();i++){
+                    if(poor_coedge_pair_vec_flag[i]) {continue;}
+
+                    auto &poor_coedge_pair = poorCoedgePairs[i]; // 取得已经配对的一对
+
+                    auto v0 = poor_coedge_pair.first.halfEdge->GetStart();
+                    auto v1 = poor_coedge_pair.first.halfEdge->GetEnd();
+                    auto v01 = poor_coedge_pair.second.halfEdge->GetStart();
+                    auto v11 = poor_coedge_pair.second.halfEdge->GetEnd();
+
+                    f2_0(poor_coedge_pair, v0, v01);
+                    f2_0(poor_coedge_pair, v1, v11);
+                }
+
+                // (2.1) 顺序1：无连接
+                for(int i=0;i<poorCoedgePairs.size();i++){
+                    if(poor_coedge_pair_vec_flag[i]) {continue;}
+
+                    auto &poor_coedge_pair = poorCoedgePairs[i]; // 取得已经配对的一对
+
+                    auto v0 = poor_coedge_pair.first.halfEdge->GetStart();
+                    auto v1 = poor_coedge_pair.first.halfEdge->GetEnd();
+                    auto v01 = poor_coedge_pair.second.halfEdge->GetStart();
+                    auto v11 = poor_coedge_pair.second.halfEdge->GetEnd();
+
+                    if(MarkNum::GetInstance().FindEdgeBetweenVertices(v0, v11) == nullptr 
+                        && MarkNum::GetInstance().FindEdgeBetweenVertices(v1, v01) == nullptr 
+                        && MarkNum::GetInstance().FindEdgeBetweenVertices(v1, v11) == nullptr 
+                        && MarkNum::GetInstance().FindEdgeBetweenVertices(v0, v01) == nullptr 
+                    ){
+                        poor_coedge_pair_vec2.emplace_back(poor_coedge_pair);
+                        poor_coedge_pair_vec_flag[i] = true;
+                    }
+                }
+                // -> 局部重排序
+                int poor_coedge_pair_vec2_size_2_1 = poor_coedge_pair_vec2.size();
+                partial_sort_for_poor_coedge_pair_vec2(poor_coedge_pair_vec2, 0, poor_coedge_pair_vec2_size_2_1);
+
+                // (2.2) 顺序2：连接非已经匹配边
+                auto f2_2 = [&](const std::pair<PoorCoedge, PoorCoedge>& poor_coedge_pair, const std::shared_ptr<Vertex>& v1, const std::shared_ptr<Vertex>& v2, bool& flag) {
+                    auto edge = MarkNum::GetInstance().FindEdgeBetweenVertices(v1, v2);
+
+                    //遍历这个边的所有coedge，如果存在coedge在Stitch::Singleton::found_coedge_set中则说明这不是一个非已匹边
+                    if(edge){
+                        for(auto i_half_edge: edge->halfEdges){
+                            if(foundCoedges.count(i_half_edge)){
+                                flag = false;
+                                break;
+                            }
+                        }
+                    }
+                };
+
+                for(int i=0;i<poorCoedgePairs.size();i++){
+                    if(poor_coedge_pair_vec_flag[i]) {continue;}
+                    auto &poor_coedge_pair = poorCoedgePairs[i]; // 取得已经配对的一对
+
+                    auto v0 = poor_coedge_pair.first.halfEdge->GetStart();
+                    auto v1 = poor_coedge_pair.first.halfEdge->GetEnd();
+                    auto v01 = poor_coedge_pair.second.halfEdge->GetStart();
+                    auto v11 = poor_coedge_pair.second.halfEdge->GetEnd();
+
+                    bool flag = true;
+
+                    f2_2(poor_coedge_pair, v0, v11, flag);
+                    f2_2(poor_coedge_pair, v1, v01, flag);
+
+                    if(flag){
+                        poor_coedge_pair_vec2.emplace_back(poor_coedge_pair);
+                        poor_coedge_pair_vec_flag[i] = true;
+                    }
+                }
+                // -> 局部重排序
+                int poor_coedge_pair_vec2_size_2_2 = poor_coedge_pair_vec2.size();
+                partial_sort_for_poor_coedge_pair_vec2(poor_coedge_pair_vec2, poor_coedge_pair_vec2_size_2_1, poor_coedge_pair_vec2_size_2_2);
+
+                // (2.3) 顺序3：剩下的情况
+                for(int i=0;i<poorCoedgePairs.size();i++){
+                    if(poor_coedge_pair_vec_flag[i]) {continue;}
+                    auto &poor_coedge_pair = poorCoedgePairs[i]; // 取得已经配对的一对
+
+                    poor_coedge_pair_vec2.emplace_back(poor_coedge_pair);
+                }
+                // -> 局部重排序
+                int poor_coedge_pair_vec2_size_2_3 = poor_coedge_pair_vec2.size();
+		        partial_sort_for_poor_coedge_pair_vec2(poor_coedge_pair_vec2, poor_coedge_pair_vec2_size_2_2, poor_coedge_pair_vec2_size_2_3);
+
+            };
+
+            rearrange_poor_coedge_pairs(poor_coedge_pair_vec2);
+
+            poorCoedgePairs = std::move(poor_coedge_pair_vec2);
+
+            // [Debug] 重排序后的配对边信息
+            for(auto poorCoedgePair: poorCoedgePairs){
+                SPDLOG_DEBUG("Match pair AFTER REARRANGE: (coedge id pair) (edge id pair): ({}, {}) ({}, {})",
+                    MarkNum::GetInstance().GetId(poorCoedgePair.first.halfEdge),
+                    MarkNum::GetInstance().GetId(poorCoedgePair.second.halfEdge),
+                    MarkNum::GetInstance().GetId(poorCoedgePair.first.halfEdge->edge),
+                    MarkNum::GetInstance().GetId(poorCoedgePair.second.halfEdge->edge)
+                );
+            }
         }
 
+        /*
+            调用顺序：4
+            对匹配的poor coedge对修改拓扑
+            输入：目前poor_coedge_pair_vec已经维护完成
+        */
         void StitchPoorCoedge(){
+            // TODO
 
+            // 3. 开始修复：遍历poor_coedge_pair_vec2（重排序后的候选破边对集合），然后依次尝试修改对应破边的各种指针以及顶点指针
+            // 规定v0 v1所在边是被与另一个合并的
+
+            for(int i=0;i<poorCoedgePairs.size();i++){
+                auto &poor_coedge_pair = poorCoedgePairs[i];
+                
+                // [debug] 打印当前修复的poorcoedge pair的信息
+                SPDLOG_DEBUG("Stitch Fix for poor_coedge_pair[{}]: (poor_coedge_pair.first.coedge: {}, edge: {}), (poor_coedge_pair.second.coedge: {}, edge: {})",
+                    i,
+                    MarkNum::GetInstance().GetId(poor_coedge_pair.first.halfEdge),
+                    MarkNum::GetInstance().GetId(poor_coedge_pair.first.halfEdge->edge),
+                    MarkNum::GetInstance().GetId(poor_coedge_pair.second.halfEdge),
+                    MarkNum::GetInstance().GetId(poor_coedge_pair.second.halfEdge->edge)
+                );
+
+                // 注意这里必须判断要修复的边是不是还在found_coedge_set里面。如果因为先前的步骤被删掉对应边了就不能再做这个修复了
+                if(foundCoedges.count(poor_coedge_pair.first.halfEdge) == 0 || foundCoedges.count(poor_coedge_pair.second.halfEdge) == 0){
+
+                    SPDLOG_DEBUG("poor_coedge_pair SKIP fixing, as they not longer in found_coedge_set: (poor_coedge_pair.first.coedge: {}, edge: {}), (poor_coedge_pair.second.coedge: {}, edge: {})",
+                        MarkNum::GetInstance().GetId(poor_coedge_pair.first.halfEdge),
+                        MarkNum::GetInstance().GetId(poor_coedge_pair.first.halfEdge->edge),
+                        MarkNum::GetInstance().GetId(poor_coedge_pair.second.halfEdge),
+                        MarkNum::GetInstance().GetId(poor_coedge_pair.second.halfEdge->edge)
+                    );
+                    continue;
+                }
+
+                auto v0 = poor_coedge_pair.first.halfEdge->GetStart();
+                auto v1 = poor_coedge_pair.first.halfEdge->GetEnd();
+                auto v01 = poor_coedge_pair.second.halfEdge->GetStart();
+                auto v11 = poor_coedge_pair.second.halfEdge->GetEnd();
+
+                // TODO: 
+                // 3.1 先改指针
+
+                // 3.2 修改所有边的v11, v01为v0, v1（如果原本v0==v11等那就跳过）
+
+                // 3.3 检查v0 v11（v1 v01）的相连情况，如果有相连就删除对应边（修改链表，相当于从loop中删除对应边）
+
+                // 3.3 执行
+
+                // 改几何部分跳过
+            }
         }
     };
 }

@@ -46,11 +46,11 @@ int main(int argc, char const *argv[]){
     YamadaMeshFixer::ObjInfo obj_info;
     obj_info.LoadFromObj(input_args.file_path);
 
-    YamadaMeshFixer::MarkNum m;
-    m.LoadFromObjInfo(obj_info);
+    // YamadaMeshFixer::MarkNum m;
+    // m.LoadFromObjInfo(obj_info);
 
     // TODO: test obj
-    m.Test();
+    // m.Test();
 
 
     return 0;

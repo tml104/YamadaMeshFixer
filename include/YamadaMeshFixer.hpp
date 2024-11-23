@@ -213,6 +213,10 @@ namespace YamadaMeshFixer{
     struct Edge: public Entity{
         std::shared_ptr<Vertex> st, ed;
         std::vector<std::shared_ptr<HalfEdge>> halfEdges; // 不保证顺序
+
+        void AddHalfEdge(const std::shared_ptr<HalfEdge>& he){
+            halfEdges.emplace_back(he);
+        }
     };
 
     struct Loop: public Entity{
@@ -586,6 +590,7 @@ namespace YamadaMeshFixer{
         }
 
         // TODO: 导出
+        // 这里（应该只）有一种解决方法：自己手写一个导出器
         void Export(){
         }
 
@@ -1235,7 +1240,6 @@ namespace YamadaMeshFixer{
             输入：目前poor_coedge_pair_vec已经维护完成
         */
         void StitchPoorCoedge(){
-            // TODO
 
             // 3. 开始修复：遍历poor_coedge_pair_vec2（重排序后的候选破边对集合），然后依次尝试修改对应破边的各种指针以及顶点指针
             // 规定v0 v1所在边是被与另一个合并的
@@ -1269,12 +1273,68 @@ namespace YamadaMeshFixer{
                 auto v01 = poor_coedge_pair.second.halfEdge->GetStart();
                 auto v11 = poor_coedge_pair.second.halfEdge->GetEnd();
 
-                // TODO: 
                 // 3.1 先改指针
+                poor_coedge_pair.first.halfEdge->partner = poor_coedge_pair.second.halfEdge;
+                poor_coedge_pair.second.halfEdge->partner = poor_coedge_pair.first.halfEdge;
+                poor_coedge_pair.second.halfEdge->edge = poor_coedge_pair.first.halfEdge->edge;
+                poor_coedge_pair.first.halfEdge->edge->AddHalfEdge(poor_coedge_pair.second.halfEdge);
+                poor_coedge_pair.second.halfEdge->sense = !(poor_coedge_pair.first.halfEdge->sense);
 
                 // 3.2 修改所有边的v11, v01为v0, v1（如果原本v0==v11等那就跳过）
+                for(auto it: MarkNum::GetInstance().edgesMap){
+                    auto e = it.second;
+                    if(v0 != v11){
+                        if(e->st == v11){
+                            SPDLOG_DEBUG("(3.2) Set e->st from v11 to v0: {} {} {}",
+                                MarkNum::GetInstance().GetId(e),
+                                MarkNum::GetInstance().GetId(v11),
+                                MarkNum::GetInstance().GetId(v0)
+                            );
+                            e->st = v0;
+                        }
+
+                        if(e->ed == v11){
+                            SPDLOG_DEBUG("(3.2) Set e->ed from v11 to v0: {} {} {}",
+                                MarkNum::GetInstance().GetId(e),
+                                MarkNum::GetInstance().GetId(v11),
+                                MarkNum::GetInstance().GetId(v0)
+                            );
+                            e->ed = v0;
+                        }
+                    }
+
+                    if(v1 != v01){
+                        if(e->st == v01){
+                            SPDLOG_DEBUG("(3.2) Set e->st from v01 to v1: {} {} {}",
+                                MarkNum::GetInstance().GetId(e),
+                                MarkNum::GetInstance().GetId(v01),
+                                MarkNum::GetInstance().GetId(v1)
+                            );
+                            e->st = v1;
+                        }
+
+                        if(e->ed == v01){
+                            SPDLOG_DEBUG("(3.2) Set e->ed from v01 to v1: {} {} {}",
+                                MarkNum::GetInstance().GetId(e),
+                                MarkNum::GetInstance().GetId(v01),
+                                MarkNum::GetInstance().GetId(v1)
+                            );
+                            e->ed = v1;
+                        }
+                    }
+                }
+
+                // TODO: 这个地方到底要不要做原先3.3的删边操作实际上有待考察
 
                 // 3.3 检查v0 v11（v1 v01）的相连情况，如果有相连就删除对应边（修改链表，相当于从loop中删除对应边）
+                // auto f3_3 = [&](const std::shared_ptr<Vertex>& v1, const std::shared_ptr<Vertex>& v2){
+                //     auto e = MarkNum::GetInstance().FindEdgeBetweenVertices(v1, v2);
+
+                //     // 删边
+                //     if(e){
+
+                //     }
+                // };
 
                 // 3.3 执行
 

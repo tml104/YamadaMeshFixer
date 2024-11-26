@@ -59,12 +59,17 @@ int main(int argc, char const *argv[]){
     YamadaMeshFixer::MarkNum::GetInstance().Test();
 
     // Stitch
+    // for(auto solid: YamadaMeshFixer::MarkNum::GetInstance().solids){
+    //     YamadaMeshFixer::StitchFixer stitchFixer(solid);
+    //     stitchFixer.Start(true, false);
+    // }
+
     for(auto solid: YamadaMeshFixer::MarkNum::GetInstance().solids){
-        YamadaMeshFixer::StitchFixer stitchFixer(solid);
-        stitchFixer.Start(true, false);
+        YamadaMeshFixer::StitchFixer2 stitchFixer(solid);
+        stitchFixer.Start(true);
     }
 
-    YamadaMeshFixer::MarkNum::GetInstance().ExportSolidsToOBJ(input_args.output_path);
+    // YamadaMeshFixer::MarkNum::GetInstance().ExportSolidsToOBJ(input_args.output_path);
 
     return 0;
 }

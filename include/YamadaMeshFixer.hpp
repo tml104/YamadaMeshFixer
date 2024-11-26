@@ -1442,4 +1442,170 @@ namespace YamadaMeshFixer{
             }
         }
     };
+
+
+    struct StitchFixer2{
+    public:
+        std::shared_ptr<Solid> solid_ptr;
+        std::vector<std::shared_ptr<HalfEdge>> poorCoedges;
+
+        std::vector<std::vector<std::shared_ptr<HalfEdge>>> rings;
+
+        StitchFixer2(const std::shared_ptr<Solid>& solid): solid_ptr(solid){}
+
+        bool Start(bool call_fix){
+            Clear();
+
+            FindPoorCoedge();
+            // if(call_fix) StitchPoorCoedge();
+        }
+
+        void Clear(){
+            poorCoedges.clear();
+            rings.clear();
+        }
+
+        void Status(){
+            // TODO
+        }
+
+    private:
+
+        /*
+            调用顺序：1
+            找破边，并保存到poor_coedge_vec中
+        */
+        void FindPoorCoedge(){
+            SPDLOG_INFO("start.");
+
+            // 先临时弄成循环遍历那样？
+
+            for(auto f: solid_ptr->faces){
+                auto lp = f->st;
+
+                auto i_half_edge = lp->st;
+
+                do{
+                    if(i_half_edge == nullptr){
+                        SPDLOG_INFO("i_half_edge is null");
+                        break;
+                    }
+
+                    // 此处已经遍历到了所有halfedges
+                    int partner_count = GeometryUtils::EdgePartnerCount(i_half_edge->edge);
+                    if(partner_count == 1){
+                        // [有效性检查]
+                        if(i_half_edge->GetStart() == nullptr){
+                            SPDLOG_ERROR("poor coedge found, but NO START: {}", MarkNum::GetInstance().GetId(i_half_edge));
+                        }
+                        if(i_half_edge->GetEnd() == nullptr){
+                            SPDLOG_ERROR("poor coedge found, but NO END: {}", MarkNum::GetInstance().GetId(i_half_edge));
+                        }
+
+                        if(i_half_edge->edge == nullptr){
+                            SPDLOG_ERROR("poor coedge found, but NO EDGE: {}", MarkNum::GetInstance().GetId(i_half_edge));
+                        }
+
+                        // [有效性检查] END
+                        
+                        // 构造poor_coedge
+                        poorCoedges.emplace_back((i_half_edge));
+
+                    }
+
+                    i_half_edge = i_half_edge->next;
+                }while(i_half_edge && i_half_edge != lp->st);
+
+            }
+
+            SPDLOG_DEBUG("poor coedge total num: {}", static_cast<int>(poorCoedges.size()));
+            SPDLOG_INFO("end.");
+        }
+
+        /*
+            调用顺序：1
+            找环，并保存到rings中
+        */
+        void FindRings(){
+            SPDLOG_INFO("start.");
+
+            std::map<std::shared_ptr<Vertex>, std::shared_ptr<HalfEdge>> st_map, ed_map;
+            
+            for(auto poor_coedge: poorCoedges){
+                auto st = poor_coedge->GetStart();
+                auto ed = poor_coedge->GetEnd();
+
+                if(st_map.find(st) == st_map.end()){
+                    st_map[st] = poor_coedge;
+                }
+                else{
+                    SPDLOG_ERROR("st_map[st] is already exist!");
+                }
+
+                if(ed_map.find(ed) == ed_map.end()){
+                    ed_map[ed] = poor_coedge;
+                }
+                else{
+                    SPDLOG_ERROR("ed_map[st] is already exist!");
+                }
+            }
+
+            std::set<std::shared_ptr<HalfEdge>> flags;
+
+            for(int i=0;i<poorCoedges.size();i++){
+                auto poor_coedge = poorCoedges[i];
+                if(flags.count(poor_coedge) == 0){
+                    auto i_poor_coedge = poor_coedge;
+
+                    std::vector<std::shared_ptr<HalfEdge>> ring;
+                    bool break_flag = false;
+
+                    do{
+                        if(i_poor_coedge == nullptr){
+                            SPDLOG_ERROR("i_poor_coedge is nullptr");
+                            break_flag = true;
+                            break;
+
+                        }
+                        if(flags.count(i_poor_coedge)){
+                            SPDLOG_ERROR("i_poor_coedge has visited: {}", MarkNum::GetInstance().GetId(i_poor_coedge));
+                            break_flag = true;
+                            break;
+                        }
+
+                        auto ed = poor_coedge->GetEnd();
+                        ring.emplace_back(poor_coedge);
+                        flags.insert(poor_coedge);
+                    
+                        i_poor_coedge = st_map[ed];
+
+                    }while(i_poor_coedge != poor_coedge);
+
+                    if(break_flag == false){
+                        SPDLOG_INFO("ring added.");
+                        rings.emplace_back(ring);
+                    }else{
+                        // 撤销对flags的修改
+                        for(auto p: ring){
+                            flags.erase(p);
+                        }
+                    }
+                }
+
+            }
+            
+            // 打印rings中已经找到的环的信息
+            SPDLOG_DEBUG("rings size: {}", rings.size());
+
+            // for(auto ring: rings){
+            //     for(auto poor_coedge: ring){
+            //         SPDLOG_DEBUG("");
+            //     }
+            // }
+
+            SPDLOG_INFO("end.");
+        }
+
+    };
+
 }

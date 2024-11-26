@@ -193,6 +193,15 @@ namespace YamadaMeshFixer{
         Coordinate pointCoord;
     };
 
+    struct Edge: public Entity{
+        std::shared_ptr<Vertex> st, ed;
+        std::vector<std::shared_ptr<HalfEdge>> halfEdges; // 不保证顺序
+
+        void AddHalfEdge(const std::shared_ptr<HalfEdge>& he){
+            halfEdges.emplace_back(he);
+        }
+    };
+
     struct HalfEdge: public Entity{
         // false: 与edge一致, true: 不一致
         bool sense; 
@@ -210,14 +219,6 @@ namespace YamadaMeshFixer{
         }
     };
 
-    struct Edge: public Entity{
-        std::shared_ptr<Vertex> st, ed;
-        std::vector<std::shared_ptr<HalfEdge>> halfEdges; // 不保证顺序
-
-        void AddHalfEdge(const std::shared_ptr<HalfEdge>& he){
-            halfEdges.emplace_back(he);
-        }
-    };
 
     struct Loop: public Entity{
         std::shared_ptr<HalfEdge> st;
@@ -305,6 +306,40 @@ namespace YamadaMeshFixer{
         }
     }
 
+    namespace Utils{
+
+        auto SplitStr(const std::string &s, char split_char = ',')
+        {
+            std::vector<std::string> res;
+            //lambda
+            auto string_find_first_not = [](const std::string &s, size_t pos = 0, char split_char = ',') {
+                for (size_t i = pos; i < s.size(); i++)
+                {
+                    if (s[i] != split_char && s[i]!=' ' && s[i]!='\t')
+                        return i;
+                }
+                return std::string::npos;
+            };
+
+            size_t begin_pos = string_find_first_not(s, 0, split_char);
+            size_t end_pos = s.find(split_char, begin_pos);
+
+            while (begin_pos != std::string::npos)
+            {
+                size_t end_pos2=end_pos-1;
+                while(begin_pos<end_pos2 && (s[end_pos2]=='\t' || s[end_pos2]==' '))
+                {
+                    end_pos2--;
+                }
+                res.emplace_back(s.substr(begin_pos, end_pos2 +1 - begin_pos));
+                begin_pos = string_find_first_not(s, end_pos, split_char);
+                end_pos = s.find(split_char, begin_pos);
+            }
+            return res;
+        }
+
+    }
+
     struct ObjInfo{
         std::vector<float> vertices;
         std::vector<int> indices;
@@ -380,8 +415,9 @@ namespace YamadaMeshFixer{
         int vertexCount;
 
         std::map<Entity*, std::pair<std::string, int>> markNumMap;
-        std::map<Entity*, int> solidMap; // no used
+        // std::map<Entity*, int> solidMap; // no used
         std::map<std::pair<int, int>, std::shared_ptr<Edge>> edgesMap;
+        std::vector<std::shared_ptr<Vertex>> vertexPtrs;
         
 
         std::vector<std::shared_ptr<Solid>> solids;
@@ -399,14 +435,13 @@ namespace YamadaMeshFixer{
             Clear();
 
             // 顶点
-            std::vector<std::shared_ptr<Vertex>> vertex_ptrs;
 
             for(int i=0,j=0;i<obj_info.vertices.size();i+=3, j+=1){
                 auto vertex_ptr = std::make_shared<Vertex>();
                 UpdateMarkNumMap(vertex_ptr);
                 vertex_ptr->pointCoord = obj_info.GetPoint(j);
 
-                vertex_ptrs.emplace_back(vertex_ptr);
+                vertexPtrs.emplace_back(vertex_ptr);
             }
 
             auto make_edge = [&](int i, int j) -> std::shared_ptr<Edge> {
@@ -426,8 +461,8 @@ namespace YamadaMeshFixer{
 
                     // 初始化边的信息（到时候可能要挪到函数里面）
                     // 此处必须使用原始顶点索引
-                    edge_ptr->st = vertex_ptrs[i];
-                    edge_ptr->ed = vertex_ptrs[j];
+                    edge_ptr->st = vertexPtrs[i];
+                    edge_ptr->ed = vertexPtrs[j];
 
                     edgesMap[{search_i,search_j}] = edge_ptr;
 
@@ -589,16 +624,81 @@ namespace YamadaMeshFixer{
             SPDLOG_INFO("End.");
         }
 
-        // TODO: 导出
+        void ExportSolidsToOBJ(std::string output_path){
+            SPDLOG_INFO("Start.");
+
+            auto output_path_splited = Utils::SplitStr(output_path, '/');
+            std::string prefix;
+            for(int i=0;i<output_path_splited.size()-1;i++){
+                prefix += output_path_splited[i] + "/";
+            }
+
+            auto output_path_splited2 = Utils::SplitStr(output_path_splited.back(), '.');
+
+            int num = 0;
+            for(auto solid: solids){
+                Export(solid, prefix+ output_path_splited2[0] + std::to_string(num++) + "." + output_path_splited2[1]);
+            }
+
+            SPDLOG_INFO("End.");
+        }
+
+        // 导出
         // 这里（应该只）有一种解决方法：自己手写一个导出器
-        void Export(){
+        void Export(const std::shared_ptr<Solid>& solid, std::string output_path){
+            SPDLOG_INFO("output_path: {}", output_path);
+
+            std::fstream f;
+            f.open(output_path, std::ios::out | std::ios::trunc);
+
+            if(!f.is_open()){
+                throw std::runtime_error("Open output_path failed");
+            }
+
+            // v
+            for(auto vertex_ptr: vertexPtrs){
+                f << "v " << vertex_ptr->pointCoord.x() << " "<< vertex_ptr->pointCoord.y() << " " << vertex_ptr->pointCoord.z() << "\n";
+            }
+
+            // f
+            for(auto face: solid->faces){
+                auto lp = face->st;
+                std::vector<int> vertices_3_indices;
+                vertices_3_indices.reserve(3);
+
+                auto i_half_edge = lp->st;
+                do{
+                    if(i_half_edge == nullptr){
+                        SPDLOG_ERROR("i_half_edge is nullptr");
+                        break;
+                    }
+
+                    vertices_3_indices.emplace_back(markNumMap[i_half_edge->GetStart().get()].second);
+
+                    i_half_edge = i_half_edge->next;
+                }while(i_half_edge && i_half_edge != lp->st);
+
+                f << "f";
+                for(auto vertices_index: vertices_3_indices){
+                    f<<" "<<vertices_index + 1;
+                }
+                f<<"\n";
+            }
+
+            f.close();
+        }
+
+        // TODO: 刷新MarkNum
+        void Refresh(){
+        
         }
 
         void Clear(){
             markNumMap.clear();
-            solidMap.clear();
+            // solidMap.clear();
             edgesMap.clear();
             solids.clear();
+            vertexPtrs.clear();
 
             entityCount = 0;
             solidCount = 0;
@@ -1007,7 +1107,7 @@ namespace YamadaMeshFixer{
 
                 do{
                     if(i_half_edge == nullptr){
-                        SPDLOG_INFO("null");
+                        SPDLOG_INFO("i_half_edge is null");
                         break;
                     }
 

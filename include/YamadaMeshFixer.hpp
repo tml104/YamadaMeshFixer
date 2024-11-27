@@ -200,6 +200,13 @@ namespace YamadaMeshFixer{
         void AddHalfEdge(const std::shared_ptr<HalfEdge>& he){
             halfEdges.emplace_back(he);
         }
+
+        void UpdateHalfEdgesPartner(){
+            // 按照halfedge添加顺序串成一个环
+            for(int h=0;h<halfEdges.size();h++){
+                halfEdges[h]->partner = halfEdges[(h+1) % halfEdges.size()];
+            }
+        }
     };
 
     struct HalfEdge: public Entity{
@@ -232,6 +239,20 @@ namespace YamadaMeshFixer{
 
     struct Solid: public Entity{
         std::vector<std::shared_ptr<Face>> faces;
+
+        void AddFace(const std::shared_ptr<Face>& f){
+            faces.emplace_back(f);
+        }
+
+        void RemoveFace(const std::shared_ptr<Face>& f){
+            // TODO: 可能有性能瓶颈，有待改进
+            for(auto it = faces.begin();it!=faces.end();it++){
+                if(*(it) == f){
+                    faces.erase(it);
+                    break;
+                }
+            }
+        }
     };
 
     namespace GeometryUtils{
@@ -304,6 +325,137 @@ namespace YamadaMeshFixer{
 
             return e->halfEdges.size();
         }
+    
+        void SplitEdge(std::shared_ptr<Edge> e, double param){
+            if(e == nullptr){
+                SPDLOG_ERROR("split edge is nullptr");
+                return ;
+            }
+
+
+            // 1. 一次性要创建的新元素
+            // 1.1 新顶点Vc
+            
+            auto v_c = std::make_shared<Vertex>();
+            v_c->pointCoord = Coordinate((e->st->pointCoord) + (e->ed->pointCoord - e->st->pointCoord) * param);
+
+            // 1.2 新边e1, e2（维护最后再说）
+            auto e1 = std::make_shared<Edge>();
+            auto e2 = std::make_shared<Edge>();
+            e1->st = e->st;
+            e1->ed = v_c;
+
+            e2->st = v_c;
+            e2->ed = e->ed;
+
+            // 2. 对每个面，先新建新元素
+            for(auto i_half_edge: e->halfEdges){ // 每个he在这里都对应一个面
+                auto i_lp = i_half_edge->loop;
+                auto i_face = i_lp->face;
+                auto i_solid = i_face->solid;
+
+                // 2.1 T1, T2（连接关系稍后维护）
+                auto l1 = std::make_shared<Loop>();
+                auto f1 = std::make_shared<Face>();
+                auto l2 = std::make_shared<Loop>();
+                auto f2 = std::make_shared<Face>();
+
+                f1->st = l1;
+                l1->face = f1;
+                f2->st = l2;
+                l2->face = f2;
+
+                // 2.2 HE1, HE2（连接关系稍后维护）
+                auto he1 = std::make_shared<HalfEdge>();
+                auto he2 = std::make_shared<HalfEdge>();
+
+                // -> HE1, HE2的部分内容设置
+                he1->edge = e1;
+                he2->edge = e2;
+                he1->sense = i_half_edge->sense;
+                he2->sense = i_half_edge->sense;
+
+                // 2.3 拿到此半边对应的对顶点Vd，并据此构造eh（从Vd指向Vc）, 以及对应半边
+
+                auto i_half_edge_next = i_half_edge->next;
+                auto i_half_edge_pre = i_half_edge->pre;
+
+                auto v_d = i_half_edge_next->GetEnd();
+                auto e_h = std::make_shared<Edge>();
+                e_h->st = v_d;
+                e_h->ed = v_c;
+
+                auto he_h_l = std::make_shared<HalfEdge>();
+                auto he_h_r = std::make_shared<HalfEdge>();
+
+                he_h_l->edge = he_h_r->edge = e_h;
+                he_h_l->sense = true;
+                he_h_r->sense = false;
+
+                e_h->AddHalfEdge(he_h_l);
+                e_h->AddHalfEdge(he_h_r);
+                e_h->UpdateHalfEdgesPartner();
+
+                // 2.4 维护各个halfedge和T1, T2的连接关系
+                l1->st = he1; // 随意指定，这里就指定成新分裂边吧，下同
+                l2->st = he2;
+
+                // -> T1的3个halfedge循环
+                i_half_edge_pre->pre = he_h_l;
+                i_half_edge_pre->next = he1;
+
+                he1->pre = i_half_edge_pre;
+                he1->next = he_h_l;
+
+                he_h_l->pre = he1;
+                he_h_l->next = i_half_edge_pre;
+
+                i_half_edge_pre->loop = he1->loop = he_h_l->loop = l1;
+
+                // -> T2的3个halfedge循环
+                i_half_edge_next->pre = he2;
+                i_half_edge_next->next = he_h_r;
+
+                he2->pre = he_h_r;
+                he2->next = i_half_edge_next;
+
+                he_h_r->pre = i_half_edge_next;
+                he_h_r->next = he2;
+
+                i_half_edge_next->loop = he2->loop = he_h_r->loop = l2;
+
+                // 把f1, f2加入solid中
+                i_solid->AddFace(f1);
+                i_solid->AddFace(f2);
+
+                i_solid->RemoveFace(i_face);
+            }
+
+            e1->UpdateHalfEdgesPartner();
+            e2->UpdateHalfEdgesPartner();
+            
+
+            // TODO: 新加与修改元素在MarkNum中的维护
+        }
+
+        void SplitHalfEdge(std::shared_ptr<HalfEdge> he, double param){
+
+            if(he == nullptr){
+                SPDLOG_ERROR("split half edge is nullptr");
+                return ;
+            }
+
+            if(he->edge == nullptr){
+                SPDLOG_ERROR("split half edge's edge is nullptr");
+                return;
+            }
+
+            bool sense = he->sense;
+
+            SplitEdge(he->edge, (sense)?(1-param):(param));
+            
+        }
+    
     }
 
     namespace Utils{
@@ -493,9 +645,10 @@ namespace YamadaMeshFixer{
                 edge_ptr->halfEdges.emplace_back(halfedge_ptr);
 
                 // 按照halfedge添加顺序串成一个环
-                for(int h=0;h<edge_ptr->halfEdges.size();h++){
-                    edge_ptr->halfEdges[h]->partner = edge_ptr->halfEdges[(h+1) % edge_ptr->halfEdges.size()];
-                }
+                // for(int h=0;h<edge_ptr->halfEdges.size();h++){
+                //     edge_ptr->halfEdges[h]->partner = edge_ptr->halfEdges[(h+1) % edge_ptr->halfEdges.size()];
+                // }
+                edge_ptr->UpdateHalfEdgesPartner();
 
                 return halfedge_ptr;
             };

@@ -367,6 +367,8 @@ namespace YamadaMeshFixer{
                 f2->st = l2;
                 l2->face = f2;
 
+                // TODO: face->solid?
+
                 // 2.2 HE1, HE2（连接关系稍后维护）
                 auto he1 = std::make_shared<HalfEdge>();
                 auto he2 = std::make_shared<HalfEdge>();
@@ -456,6 +458,130 @@ namespace YamadaMeshFixer{
 
             SplitEdge(he->edge, (sense)?(1-param):(param));
             
+        }
+
+        void CollapseEdge(std::shared_ptr<Edge> e_h){
+            
+            if(e_h == nullptr){
+                SPDLOG_ERROR("collapse edge is nullptr");
+                return ;
+            }
+
+            auto v_a = e_h->st;
+            auto v_b = e_h->ed;
+
+            int v_a_id = MarkNum::GetInstance().markNumMap[v_a.get()].second;
+            // int v_b_id = MarkNum::GetInstance().markNumMap[v_b.get()].second;
+
+            // 被删除元素集合（稍后会被执行删除操作）
+            // 点：v_b
+            // 边：e_h
+            std::vector<std::shared_ptr<HalfEdge>> halfEdgesToBeDeleted;
+            std::vector<std::shared_ptr<Loop>> loopsToBeDeleted;
+            std::vector<std::shared_ptr<Face>> facesToBeDeleted;
+
+            // 1. v_a, v_b合并为v_a
+            // 这个步骤依赖于edgesMap, 最后这个edgesMap可能也需要维护
+            // 基于延迟删除map中的元素实现
+            auto& edgesMap = MarkNum::GetInstance().edgesMap;
+            std::vector<decltype(edgesMap.begin())> its;
+            std::vector<std::shared_ptr<Edge>> edgesNeedToChange;
+
+            for (auto it = edgesMap.begin(); it != edgesMap.end(); it++){
+                auto st = it->second->st;
+                auto ed = it->second->ed;
+                
+                if(st == v_b || ed == v_b){
+                    its.emplace_back(it);
+                    edgesNeedToChange.emplace_back(it->second);
+                }
+            }
+
+            for(auto it: its){
+                edgesMap.erase(it);
+            }
+
+            for(auto e: edgesNeedToChange){
+                if(e == e_h) continue;
+                int new_st_id = MarkNum::GetInstance().markNumMap[e->st.get()].second;
+                int new_ed_id = MarkNum::GetInstance().markNumMap[e->ed.get()].second;
+
+                if(e->st == v_b){
+                    e->st = v_a;
+                    new_st_id = v_a_id;
+                }
+                if(e->ed == v_b){
+                    e->ed = v_a;
+                    new_ed_id = v_a_id;
+                }
+
+                edgesMap[{new_st_id, new_ed_id}] = e;
+            }
+
+            // 2. e_pre, e_next 合并为同一条边, 以及对应关系的修改
+            for(auto i_half_edge: e_h->halfEdges){
+                auto i_half_edge_next = i_half_edge->next;
+                auto i_half_edge_pre = i_half_edge->pre;
+
+                auto e_next = i_half_edge_next->edge;
+                auto e_pre = i_half_edge_pre->edge;
+
+                std::vector<std::shared_ptr<HalfEdge>> new_halfedges;
+                for(auto i_e_pre_half_edge: e_pre->halfEdges){
+                    if(i_e_pre_half_edge != i_half_edge_pre){
+                        new_halfedges.emplace_back(i_e_pre_half_edge);
+                    }
+                }
+
+                for(auto i_e_next_half_edge: e_next->halfEdges){
+                    if(i_e_next_half_edge != i_half_edge_next){
+                        // -> 顺带更新e_next上的所有halfedge
+
+                        auto st = i_e_next_half_edge->GetStart();
+                        auto ed = i_e_next_half_edge->GetEnd();
+                        if(ed == e_pre->st){ // st == v_b &&
+                            i_e_next_half_edge->sense = true;
+                        }
+                        else if(st == e_pre->ed){ // ed == v_b &&
+                            i_e_next_half_edge->sense = true;
+                        }
+                        else{
+                            i_e_next_half_edge->sense = false;
+                        }
+
+                        i_e_next_half_edge->edge = e_pre;
+
+
+                        new_halfedges.emplace_back(i_e_next_half_edge);
+                    }
+                }
+
+                e_pre->halfEdges = new_halfedges;
+                e_pre->UpdateHalfEdgesPartner();
+
+                // TODO: 添加被删除元素
+            }
+
+            // 3. 删除元素
+            // 这里最好是能先把预先要删除和添加的元素先保存到一些数据结构里面，然后再一次性调用AddEntity或者RemoveEntity（当然目前这个操作是纯删除元素所以应该只会用到RemoveEntity）
+            MarkNum::GetInstance().RemoveEntity(v_b);
+            MarkNum::GetInstance().RemoveEntity(e_h);
+            // TODO
+
+        }
+
+        void CollapseHalfEdge(std::shared_ptr<HalfEdge> he){
+            if(he == nullptr){
+                SPDLOG_ERROR("collapse half edge is nullptr");
+                return ;
+            }
+
+            if(he->edge == nullptr){
+                SPDLOG_ERROR("collapse half edge's edge is nullptr");
+                return;
+            }
+
+            CollapseEdge(he->edge);
         }
     
     }

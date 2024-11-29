@@ -1228,7 +1228,9 @@ namespace YamadaMeshFixer{
             auto& edgesMap = MarkNum::GetInstance().edgesMap;
             std::vector<decltype(edgesMap.begin())> its;
             std::vector<std::shared_ptr<Edge>> edgesNeedToChange;
+            std::set<std::shared_ptr<Edge>> edgesNeedToSkip;
 
+            // 1.1 找到所有和v_b有关的边
             for (auto it = edgesMap.begin(); it != edgesMap.end(); it++){
                 auto st = it->second->st;
                 auto ed = it->second->ed;
@@ -1236,36 +1238,14 @@ namespace YamadaMeshFixer{
                 if(st == v_b || ed == v_b){
                     its.emplace_back(it);
                     edgesNeedToChange.emplace_back(it->second);
+                    SPDLOG_INFO("edge marked as need to change: {}", MarkNum::GetInstance().markNumMap[it->second.get()].second);
                 }
             }
 
+            // 1.2 从edgesMap里面把所有和v_b有关的边删除掉
             for(auto it: its){
                 edgesMap.erase(it);
-            }
-
-            for(auto e: edgesNeedToChange){
-                if(e == e_h) continue; // 显然要跳过当前要收缩的边
-
-                auto e_id = MarkNum::GetInstance().markNumMap[e.get()].second;
-                SPDLOG_INFO("change e_id: {}", e_id);
-
-                int new_st_id = MarkNum::GetInstance().markNumMap[e->st.get()].second;
-                int new_ed_id = MarkNum::GetInstance().markNumMap[e->ed.get()].second;
-
-                if(e->st == v_b){ // 起始点等于v_b，那么改到v_a去，下同
-                    e->st = v_a;
-                    new_st_id = v_a_id;
-                }
-                if(e->ed == v_b){
-                    e->ed = v_a;
-                    new_ed_id = v_a_id;
-                }
-
-                if(new_st_id > new_ed_id){
-                    std::swap(new_st_id, new_ed_id);
-                }
-
-                edgesMap[{new_st_id, new_ed_id}] = e; 
+                SPDLOG_INFO("edge erase from edgesMap: {}", MarkNum::GetInstance().markNumMap[it->second.get()].second);
             }
 
             // 2. e_pre, e_next 合并为同一条边, 以及对应关系的修改
@@ -1316,9 +1296,37 @@ namespace YamadaMeshFixer{
                 halfEdgesToBeDeleted.emplace_back(i_half_edge_next);
                 // 边
                 edgesToBeDeleted.emplace_back(e_next);
+                edgesNeedToSkip.insert(e_next);
                 // 环和面
                 loopsToBeDeleted.emplace_back(i_half_edge->loop);
                 facesToBeDeleted.emplace_back(i_half_edge->loop->face);
+            }
+
+            // 1.3 重新将没有被删除的边加回去，并对边的顶点做修改
+            edgesNeedToSkip.insert(e_h);
+            for(auto e: edgesNeedToChange){
+                if(edgesNeedToSkip.count(e)) continue; // 显然要跳过~~当前要收缩的边~~ 所有被删除的边事实上都要跳过
+
+                auto e_id = MarkNum::GetInstance().markNumMap[e.get()].second;
+                SPDLOG_INFO("change e_id: {}", e_id);
+
+                int new_st_id = MarkNum::GetInstance().markNumMap[e->st.get()].second;
+                int new_ed_id = MarkNum::GetInstance().markNumMap[e->ed.get()].second;
+
+                if(e->st == v_b){ // 起始点等于v_b，那么改到v_a去，下同
+                    e->st = v_a;
+                    new_st_id = v_a_id;
+                }
+                if(e->ed == v_b){
+                    e->ed = v_a;
+                    new_ed_id = v_a_id;
+                }
+
+                if(new_st_id > new_ed_id){
+                    std::swap(new_st_id, new_ed_id);
+                }
+
+                edgesMap[{new_st_id, new_ed_id}] = e; 
             }
 
             // 3. 删除元素
@@ -1542,7 +1550,7 @@ namespace YamadaMeshFixer{
         void CollapseTest(){
             int n = 0;
             for(auto he: poorCoedges){
-                if(n<=6){
+                if(true){
                     if(auto he_it = MarkNum::GetInstance().markNumMap.find(he.get()); he_it != MarkNum::GetInstance().markNumMap.end())
                     {
                         SPDLOG_INFO("Collapsing he: {} ({} {})", he_it->second.second, MarkNum::GetInstance().markNumMap[he->GetStart().get()].second, MarkNum::GetInstance().markNumMap[he->GetEnd().get()].second);

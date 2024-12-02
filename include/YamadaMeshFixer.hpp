@@ -608,10 +608,52 @@ namespace YamadaMeshFixer{
             SPDLOG_INFO("Edge Capacity: {}", capacities[TopoType::Edge]);
             SPDLOG_INFO("Vertex Capacity: {}", capacities[TopoType::Vertex]);
 
+            // 打印被删除元素的链表长度
             for(auto p: deletedIdListsMap){
                 auto t = p.first;
                 auto l = p.second;
                 SPDLOG_INFO("List size: {} {}", static_cast<int>(t), l.size());
+            }
+
+            for(auto solid: solids){
+
+                int solid_id = GetId(solid);
+                SPDLOG_DEBUG("solid_id: {}", solid_id);
+
+                for(auto face: solid->faces){
+                    auto lp = face->st;
+                    auto i_half_edge = lp->st;
+
+                    int lp_id = GetId(lp);
+
+                    SPDLOG_DEBUG("lp_id: {}", lp_id);
+
+                    do{
+                        if(i_half_edge == nullptr){
+                            SPDLOG_ERROR("i_half_edge is nullptr");
+                            break;
+                        }
+                        auto e = i_half_edge->edge;
+
+                        int i_half_edge_id = GetId(i_half_edge);
+                        SPDLOG_DEBUG("i_half_edge_id: {}", i_half_edge_id);
+
+                        int e_id = GetId(e);
+                        SPDLOG_DEBUG("e_id: {}", e_id);
+
+                        auto e_st = e->st;
+                        auto e_ed = e->ed;
+                        int e_st_id = GetId(e_st);
+                        int e_ed_id = GetId(e_ed);
+
+                        SPDLOG_DEBUG("e_st_id: {}", e_st_id);
+                        SPDLOG_DEBUG("e_ed_id: {}", e_ed_id);
+
+
+                        i_half_edge = i_half_edge->next;
+
+                    }while(i_half_edge && i_half_edge != lp->st);
+                }
             }
 
             SPDLOG_INFO("End.");
@@ -673,7 +715,7 @@ namespace YamadaMeshFixer{
                 }
 
                 edgesMap[{st_id, ed_id}] = new_entity;
-                SPDLOG_INFO("edge added: {}, {}", st_id, ed_id);
+                SPDLOG_DEBUG("edge added: {}, {}", st_id, ed_id);
             }
         }
 
@@ -729,7 +771,7 @@ namespace YamadaMeshFixer{
 
             if(auto it = edgesMap.find({st_id, ed_id}); it != edgesMap.end()){
                 edgesMap.erase(it);
-                SPDLOG_INFO("edge removed: {} {}", st_id, ed_id);
+                SPDLOG_DEBUG("edge removed: {} {}", st_id, ed_id);
             }
             else{
                 SPDLOG_ERROR("The edge you try to remove is no exist in markNumMap: {} {}", st_id, ed_id);
@@ -782,8 +824,9 @@ namespace YamadaMeshFixer{
 
                     if(auto it2 = markNumMap.find(vertex_ptr.get()); it2 == markNumMap.end()){
                         SPDLOG_ERROR("vertex_ptr out of markNumMap!");
-                        auto e_id = markNumMap[e.get()].second;
-                        SPDLOG_INFO("e_id: {}", e_id);
+                        // auto e_id = markNumMap[e.get()].second;
+                        int e_id = GetId(e);
+                        SPDLOG_DEBUG("e_id: {}", e_id);
 
                     }
 
@@ -811,7 +854,7 @@ namespace YamadaMeshFixer{
                 }while(i_half_edge && i_half_edge != lp->st);
             }
 
-            SPDLOG_INFO("vertex_count: {}", vertex_count);
+            SPDLOG_DEBUG("vertex_count: {}", vertex_count);
 
             // f
             for(auto face: solid->faces){
@@ -1209,12 +1252,17 @@ namespace YamadaMeshFixer{
             auto v_a = e_h->st;
             auto v_b = e_h->ed;
 
-            int v_a_id = MarkNum::GetInstance().markNumMap[v_a.get()].second;
-            // int v_b_id = MarkNum::GetInstance().markNumMap[v_b.get()].second;
+            int v_a_id = MarkNum::GetInstance().GetId(v_a);
+            int v_b_id = MarkNum::GetInstance().GetId(v_b); // no actually used
+
+            SPDLOG_DEBUG("collapsing edge: {}", MarkNum::GetInstance().GetId(e_h));
+            SPDLOG_DEBUG("v_a_id: {}", v_a_id);
+            SPDLOG_DEBUG("v_b_id: {}", v_b_id);
+
 
             // 被删除元素列表（稍后会被执行删除操作）
             // 点：v_b
-            // 边：e_h, 被合并掉的那些边
+            // 边：e_h, 被合并掉的那些边（注意这里还带有非流形的情况）
             // 半边: i_half_edge, ~pre, ~next
             // 面和环：i_half_edge对应的面和环
             std::vector<std::shared_ptr<Edge>> edgesToBeDeleted;
@@ -1234,18 +1282,27 @@ namespace YamadaMeshFixer{
             for (auto it = edgesMap.begin(); it != edgesMap.end(); it++){
                 auto st = it->second->st;
                 auto ed = it->second->ed;
+
+                int e_in_edgesmap_id = MarkNum::GetInstance().GetId(it->second);
+
+                // [Debug]
+                // if(e_in_edgesmap_id == 6834){
+                //     SPDLOG_DEBUG("e_in_edgesmap_id: {}", e_in_edgesmap_id);
+                // }
                 
                 if(st == v_b || ed == v_b){
                     its.emplace_back(it);
                     edgesNeedToChange.emplace_back(it->second);
-                    SPDLOG_INFO("edge marked as need to change: {}", MarkNum::GetInstance().markNumMap[it->second.get()].second);
+                    SPDLOG_DEBUG("edge marked as need to change: {}", e_in_edgesmap_id);
                 }
             }
 
             // 1.2 从edgesMap里面把所有和v_b有关的边删除掉
             for(auto it: its){
+                int e_in_edgesmap_id = MarkNum::GetInstance().GetId(it->second);
+
                 edgesMap.erase(it);
-                SPDLOG_INFO("edge erase from edgesMap: {}", MarkNum::GetInstance().markNumMap[it->second.get()].second);
+                SPDLOG_DEBUG("edge erase from edgesMap: {}", e_in_edgesmap_id);
             }
 
             // 2. e_pre, e_next 合并为同一条边, 以及对应关系的修改
@@ -1259,35 +1316,63 @@ namespace YamadaMeshFixer{
                 std::vector<std::shared_ptr<HalfEdge>> new_halfedges;
                 for(auto i_e_pre_half_edge: e_pre->halfEdges){
                     if(i_e_pre_half_edge != i_half_edge_pre){
+
+                        if(i_half_edge->sense){
+                            // -> 顺带更新e_pre上的所有halfedge
+
+                            auto st = i_e_pre_half_edge->GetStart();
+                            auto ed = i_e_pre_half_edge->GetEnd();
+                            if(ed == e_next->st){ // st == v_b &&
+                                i_e_pre_half_edge->sense = true;
+                            }
+                            else if(st == e_next->ed){ // ed == v_b &&
+                                i_e_pre_half_edge->sense = true;
+                            }
+                            else{
+                                i_e_pre_half_edge->sense = false;
+                            }
+
+                            i_e_pre_half_edge->edge = e_next;
+                        }
+
                         new_halfedges.emplace_back(i_e_pre_half_edge);
                     }
                 }
 
                 for(auto i_e_next_half_edge: e_next->halfEdges){
                     if(i_e_next_half_edge != i_half_edge_next){
-                        // -> 顺带更新e_next上的所有halfedge
 
-                        auto st = i_e_next_half_edge->GetStart();
-                        auto ed = i_e_next_half_edge->GetEnd();
-                        if(ed == e_pre->st){ // st == v_b &&
-                            i_e_next_half_edge->sense = true;
-                        }
-                        else if(st == e_pre->ed){ // ed == v_b &&
-                            i_e_next_half_edge->sense = true;
-                        }
-                        else{
-                            i_e_next_half_edge->sense = false;
-                        }
+                        if(!i_half_edge->sense){
+                            // -> 顺带更新e_next上的所有halfedge
 
-                        i_e_next_half_edge->edge = e_pre;
+                            auto st = i_e_next_half_edge->GetStart();
+                            auto ed = i_e_next_half_edge->GetEnd();
+                            if(ed == e_pre->st){ // st == v_b &&
+                                i_e_next_half_edge->sense = true;
+                            }
+                            else if(st == e_pre->ed){ // ed == v_b &&
+                                i_e_next_half_edge->sense = true;
+                            }
+                            else{
+                                i_e_next_half_edge->sense = false;
+                            }
+
+                            i_e_next_half_edge->edge = e_pre;
+                        
+                        }
 
 
                         new_halfedges.emplace_back(i_e_next_half_edge);
                     }
                 }
 
-                e_pre->halfEdges = new_halfedges;
-                e_pre->UpdateHalfEdgesPartner();
+                if(!i_half_edge->sense){
+                    e_pre->halfEdges = new_halfedges;
+                    e_pre->UpdateHalfEdgesPartner();
+                }else{
+                    e_next->halfEdges = new_halfedges;
+                    e_next->UpdateHalfEdgesPartner();
+                }
 
                 // 添加被删除元素
                 // 半边
@@ -1295,8 +1380,15 @@ namespace YamadaMeshFixer{
                 halfEdgesToBeDeleted.emplace_back(i_half_edge_pre);
                 halfEdgesToBeDeleted.emplace_back(i_half_edge_next);
                 // 边
-                edgesToBeDeleted.emplace_back(e_next);
-                edgesNeedToSkip.insert(e_next);
+
+                if(!i_half_edge->sense){
+                    edgesNeedToSkip.insert(e_next);
+                    edgesToBeDeleted.emplace_back(e_next);
+                }else{
+                    edgesNeedToSkip.insert(e_pre);
+                    edgesToBeDeleted.emplace_back(e_pre);
+                }
+
                 // 环和面
                 loopsToBeDeleted.emplace_back(i_half_edge->loop);
                 facesToBeDeleted.emplace_back(i_half_edge->loop->face);
@@ -1307,11 +1399,10 @@ namespace YamadaMeshFixer{
             for(auto e: edgesNeedToChange){
                 if(edgesNeedToSkip.count(e)) continue; // 显然要跳过~~当前要收缩的边~~ 所有被删除的边事实上都要跳过
 
-                auto e_id = MarkNum::GetInstance().markNumMap[e.get()].second;
-                SPDLOG_INFO("change e_id: {}", e_id);
+                auto e_id = MarkNum::GetInstance().GetId(e);
 
-                int new_st_id = MarkNum::GetInstance().markNumMap[e->st.get()].second;
-                int new_ed_id = MarkNum::GetInstance().markNumMap[e->ed.get()].second;
+                int new_st_id = MarkNum::GetInstance().GetId(e->st);
+                int new_ed_id = MarkNum::GetInstance().GetId(e->ed);
 
                 if(e->st == v_b){ // 起始点等于v_b，那么改到v_a去，下同
                     e->st = v_a;
@@ -1326,7 +1417,10 @@ namespace YamadaMeshFixer{
                     std::swap(new_st_id, new_ed_id);
                 }
 
+                // 这里在插入之前应该先检查一下
+
                 edgesMap[{new_st_id, new_ed_id}] = e; 
+                SPDLOG_DEBUG("change e_id: {} ({} {})", e_id, new_st_id, new_ed_id);
             }
 
             // 3. 删除元素
@@ -1364,7 +1458,12 @@ namespace YamadaMeshFixer{
                 return;
             }
 
+            SPDLOG_DEBUG("Collapsing he: {} ({} {})", MarkNum::GetInstance().GetId(he), MarkNum::GetInstance().GetId(he->GetStart()), MarkNum::GetInstance().GetId(he->GetEnd()));
             CollapseEdge(he->edge);
+        }
+
+        void CollapseWithTwoVertices(const std::shared_ptr<Vertex>& v1, const std::shared_ptr<Vertex>& v2){
+
         }
     
     }
@@ -1421,7 +1520,7 @@ namespace YamadaMeshFixer{
 
                 do{
                     if(i_half_edge == nullptr){
-                        SPDLOG_INFO("i_half_edge is null");
+                        SPDLOG_ERROR("i_half_edge is null");
                         break;
                     }
 
@@ -1516,7 +1615,7 @@ namespace YamadaMeshFixer{
                     }while(i_poor_coedge != poor_coedge);
 
                     if(break_flag == false){
-                        SPDLOG_INFO("ring added.");
+                        SPDLOG_DEBUG("ring added.");
                         rings.emplace_back(ring);
                     }else{
                         // 撤销对flags的修改
@@ -1553,12 +1652,12 @@ namespace YamadaMeshFixer{
                 if(true){
                     if(auto he_it = MarkNum::GetInstance().markNumMap.find(he.get()); he_it != MarkNum::GetInstance().markNumMap.end())
                     {
-                        SPDLOG_INFO("Collapsing he: {} ({} {})", he_it->second.second, MarkNum::GetInstance().markNumMap[he->GetStart().get()].second, MarkNum::GetInstance().markNumMap[he->GetEnd().get()].second);
+                        // SPDLOG_DEBUG("Collapsing he: {} ({} {})", he_it->second.second, MarkNum::GetInstance().markNumMap[he->GetStart().get()].second, MarkNum::GetInstance().markNumMap[he->GetEnd().get()].second);
                         GeometryUtils::CollapseHalfEdge(he);
                         MarkNum::GetInstance().Test();
                     }
                     else{
-                        SPDLOG_INFO("Collapsing he is not exist in markNumMap.");
+                        SPDLOG_ERROR("Collapsing he is not exist in markNumMap.");
                     }
                 }
                 else{

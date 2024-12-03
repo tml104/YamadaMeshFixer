@@ -1596,6 +1596,7 @@ namespace YamadaMeshFixer{
         /*
             调用顺序：2
             找环，并保存到rings中
+            TODO: 如果要是遇到仙人掌图这里复杂度会特别高
         */
         void FindRings(){
             SPDLOG_INFO("start.");
@@ -1657,6 +1658,7 @@ namespace YamadaMeshFixer{
                         SPDLOG_DEBUG("ring added.");
                         rings.emplace_back(ring);
                     }else{
+                        SPDLOG_DEBUG("no ring.");
                         // 撤销对flags的修改
                         for(auto p: ring){
                             flags.erase(p);
@@ -1680,13 +1682,12 @@ namespace YamadaMeshFixer{
 
         void DoRing(){
 
-            // 1. 分割环
             for(auto ring: rings){
+                // 1. 分割环
                 std::vector<std::shared_ptr<Vertex>> vs;
                 for(auto poor_coedge: ring){
                     
                     auto st = poor_coedge->GetStart();
-                    auto ed = poor_coedge->GetEnd();
 
                     vs.emplace_back(st);
                 }
@@ -1707,6 +1708,10 @@ namespace YamadaMeshFixer{
                         }
                     }
                 }
+
+                // -> 把分割后的分成两部分（方便后续遍历）
+                std::vector<std::shared_ptr>
+
             }
         }
 

@@ -1242,6 +1242,7 @@ namespace YamadaMeshFixer{
             
         }
 
+        // TODO：应当保证输入的模型在导入的时候排除掉退化边之类的情况
         void CollapseEdge(std::shared_ptr<Edge> e_h){
             
             if(e_h == nullptr){
@@ -1417,10 +1418,46 @@ namespace YamadaMeshFixer{
                     std::swap(new_st_id, new_ed_id);
                 }
 
-                // 这里在插入之前应该先检查一下
+                // 这里在插入之前应该先检查一下理论上应该就ok了
+                // 如果下面的判断条件满足，那么说明当前e其实应该是要和it对应的那个边做合并的
+                if(auto it = edgesMap.find({new_st_id, new_ed_id}); it != edgesMap.end()){
+                    std::vector<std::shared_ptr<HalfEdge>> new_halfedges;
+                    auto e2 = it->second;
 
-                edgesMap[{new_st_id, new_ed_id}] = e; 
-                SPDLOG_DEBUG("change e_id: {} ({} {})", e_id, new_st_id, new_ed_id);
+                    for(auto i_e_half_edge: e->halfEdges){
+
+                        auto i_e_half_edge_st = i_e_half_edge->GetStart();
+                        auto i_e_half_edge_ed = i_e_half_edge->GetEnd();
+
+                        if(i_e_half_edge_ed == e2->st){
+                            i_e_half_edge->sense = true;
+                        }
+                        else if(i_e_half_edge_st == e2->ed){
+                            i_e_half_edge->sense = true;
+                        }
+                        else{
+                            i_e_half_edge->sense = false;
+                        }
+
+                        i_e_half_edge->edge = e2;
+                    }
+
+                    new_halfedges.insert(new_halfedges.end(), e->halfEdges.begin(), e->halfEdges.end());
+                    new_halfedges.insert(new_halfedges.end(), e2->halfEdges.begin(), e2->halfEdges.end());
+
+                    e2->halfEdges = new_halfedges;
+                    e2->UpdateHalfEdgesPartner();
+
+                    // 这里之后就不再将e插入回去了，而是标记为删除边
+
+                    edgesToBeDeleted.emplace_back(e);
+                }
+                else{ // 否则说明e这个边就只是和v_b相连并且没有别的边另一侧顶点也和e的另一侧顶点相同，也即收缩后不会出现重叠情况。此时正常修改即可
+
+                    edgesMap[{new_st_id, new_ed_id}] = e; 
+                    SPDLOG_DEBUG("change e_id: {} ({} {})", e_id, new_st_id, new_ed_id);
+                }
+
             }
 
             // 3. 删除元素
@@ -1462,6 +1499,7 @@ namespace YamadaMeshFixer{
             CollapseEdge(he->edge);
         }
 
+        // TODO:
         void CollapseWithTwoVertices(const std::shared_ptr<Vertex>& v1, const std::shared_ptr<Vertex>& v2){
 
         }
@@ -1556,7 +1594,7 @@ namespace YamadaMeshFixer{
         }
 
         /*
-            调用顺序：1
+            调用顺序：2
             找环，并保存到rings中
         */
         void FindRings(){
@@ -1564,6 +1602,7 @@ namespace YamadaMeshFixer{
 
             std::map<std::shared_ptr<Vertex>, std::shared_ptr<HalfEdge>> st_map, ed_map;
             
+            // 插入边的首尾顶点
             for(auto poor_coedge: poorCoedges){
                 auto st = poor_coedge->GetStart();
                 auto ed = poor_coedge->GetEnd();
@@ -1639,6 +1678,38 @@ namespace YamadaMeshFixer{
             SPDLOG_INFO("end.");
         }
 
+        void DoRing(){
+
+            // 1. 分割环
+            for(auto ring: rings){
+                std::vector<std::shared_ptr<Vertex>> vs;
+                for(auto poor_coedge: ring){
+                    
+                    auto st = poor_coedge->GetStart();
+                    auto ed = poor_coedge->GetEnd();
+
+                    vs.emplace_back(st);
+                }
+
+                T_NUM max_dis = MINVAL;
+                int max_index_i = -1;
+                int max_index_j = -1;
+                for(int i=0;i<vs.size();i++){
+                    for(int j=i+1;j<vs.size();j++){
+                        auto c1 = vs[i]->pointCoord;
+                        auto c2 = vs[j]->pointCoord;
+                        auto dis = c1.Distance(c2);
+
+                        if(dis > max_dis){
+                            max_index_i = i;
+                            max_index_j = j;
+                            max_dis = dis;
+                        }
+                    }
+                }
+            }
+        }
+
 
         void SplitTest(){
             for(auto he: poorCoedges){
@@ -1663,7 +1734,6 @@ namespace YamadaMeshFixer{
                 else{
                     break;
                 }
-                // if(n%2) continue;
                 n++;
             }
         }

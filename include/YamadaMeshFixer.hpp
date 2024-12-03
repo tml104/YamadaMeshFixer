@@ -36,6 +36,8 @@ namespace YamadaMeshFixer{
 
     const T_NUM EPSLION2_SIN = sqrt(1.0 - EPSLION2 * EPSLION2);
 
+    const T_NUM PARAM_EPSLION = 0.05; // 用于分割时配对点用的
+
   	const T_NUM MINVAL = -1e9;
 	const T_NUM MAXVAL = 1e9;
 
@@ -240,6 +242,10 @@ namespace YamadaMeshFixer{
         std::shared_ptr<Vertex> st, ed;
         std::vector<std::shared_ptr<HalfEdge>> halfEdges; // 不保证顺序
 
+        T_NUM Length() const {
+            return st->pointCoord.Distance(ed->pointCoord);
+        }
+
         void AddHalfEdge(const std::shared_ptr<HalfEdge>& he){
             halfEdges.emplace_back(he);
         }
@@ -261,6 +267,10 @@ namespace YamadaMeshFixer{
 
         std::shared_ptr<Vertex> GetEnd() const {
             return sense?(edge->st):(edge->ed);
+        }
+
+        T_NUM Length() const{
+            return edge->Length();
         }
     };
 
@@ -1033,7 +1043,8 @@ namespace YamadaMeshFixer{
             return e->halfEdges.size();
         }
     
-        void SplitEdge(std::shared_ptr<Edge> e, double param){
+        // 返回值：first是 st~mid 的部分，second是 mid~ed的部分
+        std::pair<std::shared_ptr<Edge>, std::shared_ptr<Edge>> SplitEdge(std::shared_ptr<Edge> e, double param){
 
             param = Utils::clamp(param, 0.0, 1.0);
 
@@ -1220,9 +1231,11 @@ namespace YamadaMeshFixer{
                 MarkNum::GetInstance().AddEntity(face_to_be_added);
             }
 
+            return {e1, e2};
         }
 
-        void SplitHalfEdge(std::shared_ptr<HalfEdge> he, double param){
+        // 返回值：first是 st~mid 的部分，second是 mid~ed的部分
+        std::pair<std::shared_ptr<Edge>, std::shared_ptr<Edge>> SplitHalfEdge(std::shared_ptr<HalfEdge> he, double param){
             
             param = Utils::clamp(param, 0.0, 1.0);
 
@@ -1238,8 +1251,12 @@ namespace YamadaMeshFixer{
 
             bool sense = he->sense;
 
-            SplitEdge(he->edge, (sense)?(1-param):(param));
-            
+            auto ans = SplitEdge(he->edge, (sense)?(1-param):(param));
+            if(sense){
+                std::swap(ans.first, ans.second);
+            }
+
+            return ans;
         }
 
         // TODO：应当保证输入的模型在导入的时候排除掉退化边之类的情况
@@ -1681,24 +1698,35 @@ namespace YamadaMeshFixer{
         }
 
         void DoRing(){
-
-            for(auto ring: rings){
-                // 1. 分割环
-                std::vector<std::shared_ptr<Vertex>> vs;
-                for(auto poor_coedge: ring){
-                    
-                    auto st = poor_coedge->GetStart();
-
-                    vs.emplace_back(st);
+            using ListType = std::list<std::pair<std::shared_ptr<HalfEdge>, T_NUM>>;
+            auto split_ring = [&] (std::vector<std::shared_ptr<HalfEdge>>& ring, ListType& part, int max_index_i, int max_index_j){
+                T_NUM part_dis_sum = 0.0;
+                for(int i=max_index_i; i != max_index_j;i=(i+1)%ring.size()){
+                    part.emplace_back(ring[i], 0.0);
+                    part_dis_sum += ring[i]->Length();
                 }
 
+                T_NUM temp_dis_sum = 0.0;
+                for(auto& list_element: part){
+                    list_element.second = temp_dis_sum;
+                    temp_dis_sum += (list_element.first->Length()) / part_dis_sum;
+                }
+            };
+
+            for(auto ring: rings){
+                if(ring.size()<2){
+                    SPDLOG_ERROR("ring size is less than 2.");
+                    break;
+                }
+                
+                // 1. 分割环
                 T_NUM max_dis = MINVAL;
                 int max_index_i = -1;
                 int max_index_j = -1;
-                for(int i=0;i<vs.size();i++){
-                    for(int j=i+1;j<vs.size();j++){
-                        auto c1 = vs[i]->pointCoord;
-                        auto c2 = vs[j]->pointCoord;
+                for(int i=0;i<ring.size();i++){
+                    for(int j=i+1;j<ring.size();j++){
+                        auto c1 = ring[i]->GetStart()->pointCoord;
+                        auto c2 = ring[j]->GetEnd()->pointCoord;
                         auto dis = c1.Distance(c2);
 
                         if(dis > max_dis){
@@ -1709,8 +1737,28 @@ namespace YamadaMeshFixer{
                     }
                 }
 
-                // -> 把分割后的分成两部分（方便后续遍历）
-                std::vector<std::shared_ptr>
+                if(max_index_i == -1 || max_index_j == -1){
+                    SPDLOG_ERROR("No found for max_index_i or max_index_j");
+                    break;
+                }
+
+                // -> 把分割后的分成两部分（方便后续遍历），并更新他们的st参数值
+                // 这里都顺着存吧，一会找对面的时候记得用1减去对面的参数来配对就好
+                ListType part1, part2;
+
+                split_ring(ring, part1, max_index_i, max_index_j);
+                split_ring(ring, part2, max_index_j, max_index_i);
+
+                // -> 根据线段数多寡交换，使得：part1始终是较少的那个，part2始终是较多的那个
+                // （TODO: 存疑，可能没有必要）
+
+                // 2. 配对
+
+                // 3. 分割多侧并配对
+
+                // 4. 分割少侧并配对
+
+                // 5. 配对点缝合
 
             }
         }

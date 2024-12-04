@@ -53,7 +53,7 @@ int main(int argc, char const *argv[]){
     YamadaMeshFixer::MarkNum::GetInstance().LoadFromObjInfo(obj_info);
 
     // test obj
-    YamadaMeshFixer::MarkNum::GetInstance().Test();
+    // YamadaMeshFixer::MarkNum::GetInstance().Test();
 
 
     for(auto solid: YamadaMeshFixer::MarkNum::GetInstance().solids){

@@ -1050,7 +1050,7 @@ namespace YamadaMeshFixer{
 
             if(e == nullptr){
                 SPDLOG_ERROR("split edge is nullptr");
-                return ;
+                return {nullptr, nullptr};
             }
 
             // 新增元素列表
@@ -1235,28 +1235,31 @@ namespace YamadaMeshFixer{
         }
 
         // 返回值：first是 st~mid 的部分，second是 mid~ed的部分
-        std::pair<std::shared_ptr<Edge>, std::shared_ptr<Edge>> SplitHalfEdge(std::shared_ptr<HalfEdge> he, double param){
+        std::pair<std::shared_ptr<HalfEdge>, std::shared_ptr<HalfEdge>> SplitHalfEdge(std::shared_ptr<HalfEdge> he, double param){
             
             param = Utils::clamp(param, 0.0, 1.0);
 
             if(he == nullptr){
                 SPDLOG_ERROR("split half edge is nullptr");
-                return ;
+                return {nullptr, nullptr};
             }
 
             if(he->edge == nullptr){
                 SPDLOG_ERROR("split half edge's edge is nullptr");
-                return;
+                return {nullptr, nullptr};
             }
 
             bool sense = he->sense;
 
-            auto ans = SplitEdge(he->edge, (sense)?(1-param):(param));
+            auto res = SplitEdge(he->edge, (sense)?(1-param):(param));
             if(sense){
-                std::swap(ans.first, ans.second);
+                std::swap(res.first, res.second);
             }
 
-            return ans;
+            // 这里要做一点处理
+            // std::pair<std::shared_ptr<HalfEdge>, std::shared_ptr<HalfEdge>> ans;
+
+            return {res.first->halfEdges.front(), res.second->halfEdges.front()};
         }
 
         // TODO：应当保证输入的模型在导入的时候排除掉退化边之类的情况
@@ -1516,9 +1519,115 @@ namespace YamadaMeshFixer{
             CollapseEdge(he->edge);
         }
 
-        // TODO:
-        void CollapseWithTwoVertices(const std::shared_ptr<Vertex>& v1, const std::shared_ptr<Vertex>& v2){
+        void CollapseWithTwoVertices(const std::shared_ptr<Vertex>& v_a, const std::shared_ptr<Vertex>& v_b){
+            auto e = MarkNum::GetInstance().FindEdgeBetweenVertices(v_a, v_b);
+            if(e){
+                CollapseEdge(e);
+            }
+            else{
+                // 此处假设v2就是v_b
+                int v_a_id = MarkNum::GetInstance().GetInstance().GetId(v_a);
+                int v_b_id = MarkNum::GetInstance().GetInstance().GetId(v_b);
 
+                SPDLOG_DEBUG("collapsing with two vertices: v_a_id:{} v_b_id:{}", v_a_id, v_b_id);
+
+                // 被删除元素列表（稍后会被执行删除操作）
+                // 点：v_b
+                // 边：e_h, 被合并掉的那些边（注意这里还带有非流形的情况）
+                auto& edgesMap = MarkNum::GetInstance().edgesMap;
+                std::vector<decltype(edgesMap.begin())> its;
+                std::vector<std::shared_ptr<Edge>> edgesNeedToChange;
+
+                std::vector<std::shared_ptr<Edge>> edgesToBeDeleted;
+
+                // 1.1 找到所有和v_b有关的边
+                for (auto it = edgesMap.begin(); it != edgesMap.end(); it++){
+                    auto st = it->second->st;
+                    auto ed = it->second->ed;
+
+                    int e_in_edgesmap_id = MarkNum::GetInstance().GetId(it->second);
+                    
+                    if(st == v_b || ed == v_b){
+                        its.emplace_back(it);
+                        edgesNeedToChange.emplace_back(it->second);
+                        SPDLOG_DEBUG("edge marked as need to change: {}", e_in_edgesmap_id);
+                    }
+                }
+                // 1.2 从edgesMap里面把所有和v_b有关的边删除掉
+                for(auto it: its){
+                    int e_in_edgesmap_id = MarkNum::GetInstance().GetId(it->second);
+
+                    edgesMap.erase(it);
+                    SPDLOG_DEBUG("edge erase from edgesMap: {}", e_in_edgesmap_id);
+                }
+
+                // 1.3 重新将没有被删除的边加回去，并对边的顶点做修改
+                for(auto e: edgesNeedToChange){
+                    auto e_id = MarkNum::GetInstance().GetId(e);
+
+                    int new_st_id = MarkNum::GetInstance().GetId(e->st);
+                    int new_ed_id = MarkNum::GetInstance().GetId(e->ed);
+
+                    if(e->st == v_b){ // 起始点等于v_b，那么改到v_a去，下同
+                        e->st = v_a;
+                        new_st_id = v_a_id;
+                    }
+                    if(e->ed == v_b){
+                        e->ed = v_a;
+                        new_ed_id = v_a_id;
+                    }
+
+                    if(new_st_id > new_ed_id){
+                        std::swap(new_st_id, new_ed_id);
+                    }
+
+                     // 如果下面的判断条件满足，那么说明当前e其实应该是要和it对应的那个边做合并的
+                    if(auto it = edgesMap.find({new_st_id, new_ed_id}); it != edgesMap.end()){
+                        std::vector<std::shared_ptr<HalfEdge>> new_halfedges;
+                        auto e2 = it->second;
+
+                        for(auto i_e_half_edge: e->halfEdges){
+
+                            auto i_e_half_edge_st = i_e_half_edge->GetStart();
+                            auto i_e_half_edge_ed = i_e_half_edge->GetEnd();
+
+                            if(i_e_half_edge_ed == e2->st){
+                                i_e_half_edge->sense = true;
+                            }
+                            else if(i_e_half_edge_st == e2->ed){
+                                i_e_half_edge->sense = true;
+                            }
+                            else{
+                                i_e_half_edge->sense = false;
+                            }
+
+                            i_e_half_edge->edge = e2;
+                        }
+
+                        new_halfedges.insert(new_halfedges.end(), e->halfEdges.begin(), e->halfEdges.end());
+                        new_halfedges.insert(new_halfedges.end(), e2->halfEdges.begin(), e2->halfEdges.end());
+
+                        e2->halfEdges = new_halfedges;
+                        e2->UpdateHalfEdgesPartner();
+
+                        // 这里之后就不再将e插入回去了，而是标记为删除边
+
+                        edgesToBeDeleted.emplace_back(e);
+                    }
+                    else{ // 否则说明e这个边就只是和v_b相连并且没有别的边另一侧顶点也和e的另一侧顶点相同，也即收缩后不会出现重叠情况。此时正常修改即可
+                        edgesMap[{new_st_id, new_ed_id}] = e; 
+                        SPDLOG_DEBUG("change e_id: {} ({} {})", e_id, new_st_id, new_ed_id);
+                    }
+
+                }
+
+                // 3. 删除元素
+
+                MarkNum::GetInstance().RemoveEntity(v_b);
+                for(auto edge_to_be_deleted: edgesToBeDeleted){
+                    MarkNum::GetInstance().RemoveEntity(edge_to_be_deleted, false);
+                }
+            }
         }
     
     }
@@ -1540,9 +1649,9 @@ namespace YamadaMeshFixer{
 
             FindPoorCoedge();
             // SplitTest();
-            CollapseTest();
-
-            // if(call_fix) StitchPoorCoedge();
+            // CollapseTest();
+            FindRings();
+            DoRings();
 
             SPDLOG_INFO("End.");
             return true;
@@ -1663,9 +1772,9 @@ namespace YamadaMeshFixer{
                             break;
                         }
 
-                        auto ed = poor_coedge->GetEnd();
-                        ring.emplace_back(poor_coedge);
-                        flags.insert(poor_coedge);
+                        auto ed = i_poor_coedge->GetEnd();
+                        ring.emplace_back(i_poor_coedge);
+                        flags.insert(i_poor_coedge);
                     
                         i_poor_coedge = st_map[ed];
 
@@ -1688,28 +1797,268 @@ namespace YamadaMeshFixer{
             // 打印rings中已经找到的环的信息
             SPDLOG_DEBUG("rings size: {}", rings.size());
 
-            // for(auto ring: rings){
-            //     for(auto poor_coedge: ring){
-            //         SPDLOG_DEBUG("");
-            //     }
-            // }
+            for(auto ring: rings){
+                SPDLOG_DEBUG("found ring size: {}", ring.size());
+                for(auto poor_coedge: ring){
+                    SPDLOG_DEBUG("poor_coedge id: {}", MarkNum::GetInstance().GetId(poor_coedge));
+                }
+            }
 
             SPDLOG_INFO("end.");
         }
 
-        void DoRing(){
-            using ListType = std::list<std::pair<std::shared_ptr<HalfEdge>, T_NUM>>;
-            auto split_ring = [&] (std::vector<std::shared_ptr<HalfEdge>>& ring, ListType& part, int max_index_i, int max_index_j){
+        void DoRings(){
+            struct ListNode{
+                std::shared_ptr<HalfEdge> halfEdge;
+                T_NUM st_param;
+                T_NUM ed_param;
+
+                ListNode() {}
+                ListNode(const std::shared_ptr<HalfEdge>& he, T_NUM st_param, T_NUM ed_param): halfEdge(he), st_param(st_param), ed_param(ed_param) {}
+            };
+
+            using ListType = std::list<ListNode>;
+            using VertexMapType = std::map<std::shared_ptr<Vertex>, std::shared_ptr<Vertex>>;
+
+            auto debug_list = [&] (const ListType& part){
+                SPDLOG_DEBUG("list size: {}", part.size());
+                for(auto node: part){
+                
+                    SPDLOG_DEBUG("halfEdge: {}", MarkNum::GetInstance().GetId(node.halfEdge));
+                    SPDLOG_DEBUG("st_param: {}", node.st_param);
+                    SPDLOG_DEBUG("ed_param: {}", node.ed_param);
+                }
+            };
+
+            auto debug_map = [&] (const VertexMapType& m){
+                SPDLOG_DEBUG("map size: {}", m.size());
+                for(auto p: m){
+                    SPDLOG_DEBUG("map vertices pair: {} {}", MarkNum::GetInstance().GetId(p.first), MarkNum::GetInstance().GetId(p.second));
+                }
+            };
+
+            auto split_ring = [&] (std::vector<std::shared_ptr<HalfEdge>>& ring, ListType& part, int max_index_i, int max_index_j, bool reverse_param){
                 T_NUM part_dis_sum = 0.0;
                 for(int i=max_index_i; i != max_index_j;i=(i+1)%ring.size()){
-                    part.emplace_back(ring[i], 0.0);
+                    part.emplace_back(ring[i], 0.0, 0.0);
                     part_dis_sum += ring[i]->Length();
                 }
 
                 T_NUM temp_dis_sum = 0.0;
-                for(auto& list_element: part){
-                    list_element.second = temp_dis_sum;
-                    temp_dis_sum += (list_element.first->Length()) / part_dis_sum;
+                for(auto& list_node: part){
+                    list_node.st_param = (reverse_param)?(1.0-temp_dis_sum):(temp_dis_sum);
+                    temp_dis_sum += (list_node.halfEdge->Length()) / part_dis_sum;
+                    list_node.ed_param = (reverse_param)?(1.0-temp_dis_sum):(temp_dis_sum);
+                }
+            };
+
+            auto match_vertices = [&] (const ListType& part1, const ListType& part2, VertexMapType& part1_vmap, VertexMapType& part2_vmap){
+
+                // first pass
+                auto rit = part2.rbegin();
+                for(auto it = part1.begin(); it!= part1.end(); it++){
+                    if(it == part1.begin()){ // 这么写万一是空容器也可应对
+                        continue;
+                    }
+
+                    auto he = it->halfEdge;
+                    auto param = it->st_param;
+
+                    auto most_right_rit = part2.rend();
+
+                    while(rit != part2.rend() && (std::next(rit))!=part2.rend() && rit->st_param<=param){
+                        if(param - rit->st_param <= 0.05){
+                            most_right_rit = rit;
+                        }
+                        rit++;
+                    }
+
+                    if(most_right_rit != part2.rend()){ // 找到了
+                        auto v1 = he->GetStart();
+                        auto v2 = most_right_rit->halfEdge->GetStart();
+                        part1_vmap[v1] = v2;
+                        part2_vmap[v2] = v1;
+                    }
+                }
+
+                // second pass
+                auto it = part1.begin();
+                if(it != part1.end()){
+                    it++;
+                }
+                for(auto rit = part2.rbegin(); rit!= part2.rend(); rit++){
+                    if(std::next(rit) == part2.rend()){
+                        continue;
+                    }
+
+                    auto he = rit->halfEdge;
+                    auto param = rit->st_param;
+
+                    if(part2_vmap.count(he->GetStart())){ // 记得排除掉已经匹配的点（上面倒是不用排除）
+                        continue;
+                    }
+
+                    auto most_right_it = part1.end();
+
+                    while(it != part1.end() && it->st_param <= param){
+                        if(param - it->st_param <= 0.05 && (part1_vmap.count(it->halfEdge->GetStart()) == 0)){ // 这里要额外：已经配对过的顶点要跳过
+                            most_right_it = it;
+                        }
+                        it++;
+                    }
+
+                    if(most_right_it != part1.end()){ // 找到了
+                        auto v1 = most_right_it->halfEdge->GetStart();
+                        auto v2 = he->GetStart();
+                        part1_vmap[v1] = v2;
+                        part2_vmap[v2] = v1;
+                    }
+                }
+            };
+
+            // part1: 分割点参数提供者
+            // part2: 被分割的那部分
+            // 这是一个n^2算法
+            auto split_part = [&] (ListType& part1, ListType& part2, VertexMapType& part1_vmap, VertexMapType& part2_vmap){
+                for(auto it = part1.begin(); it != part1.end(); it++){
+                    if(it == part1.begin()){ // 这么写万一是空容器也可应对
+                        continue;
+                    }
+
+                    auto he = it->halfEdge;
+                    auto param = it->st_param;
+
+                    if(part1_vmap.count(he->GetStart()) == 0){ // 未有匹配，则需要在对面分割
+                        for(auto rit = part2.rbegin(); rit != part2.rend(); rit++){
+
+                            if(rit->st_param > param && rit->ed_param < param){ // 拆分
+
+                                auto he_need_to_split = rit->halfEdge;
+                                auto new_param = (rit->st_param - param) / (rit->st_param - rit->ed_param);
+
+                                auto half_edges_splited_pair = GeometryUtils::SplitHalfEdge(he_need_to_split, new_param);
+
+                                auto new_vertex = half_edges_splited_pair.first->GetEnd();
+
+                                // 这里要对edges_pair做一点处理……
+                                // 第一个新分裂出的半边
+                                ListNode half_edges_splited_pair_first {
+                                    half_edges_splited_pair.first,
+                                    rit->st_param,
+                                    param
+                                };
+
+                                // 第二个新分裂出的半边
+                                ListNode half_edges_splited_pair_second {
+                                    half_edges_splited_pair.second,
+                                    param,
+                                    rit->ed_param
+                                };
+
+                                // 删除
+                                auto rit_base = rit.base();
+                                --rit_base;
+                                auto insert_pos = part2.erase(rit_base);
+
+                                // 插入
+                                part2.insert(insert_pos, half_edges_splited_pair_first);
+                                part2.insert(insert_pos, half_edges_splited_pair_second);
+
+                                // 令拆分后新生成的点与当前未有匹配的那个点匹配
+                                part1_vmap[he->GetStart()] = new_vertex;
+                                part2_vmap[new_vertex] = he->GetStart();
+
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                for(auto rit = part2.rbegin(); rit != part2.rend(); rit++){
+                    if(std::next(rit) == part2.rend()){
+                        continue;
+                    }
+
+                    auto he = rit->halfEdge;
+                    auto param = rit->st_param;
+
+                    if(part2_vmap.count(he->GetStart()) == 0){ // 没有匹配
+                        for(auto it = part1.begin(); it != part1.end(); it++){
+                            if(it->st_param < param && it->ed_param > param){
+                                auto he_need_to_split = it->halfEdge;
+                                auto new_param = (param - it->st_param) / (it->ed_param - it->st_param);
+
+                                auto half_edges_splited_pair = GeometryUtils::SplitHalfEdge(he_need_to_split, new_param);
+
+                                auto new_vertex = half_edges_splited_pair.first->GetEnd();
+                                // 第一个新分裂出的半边
+                                ListNode half_edges_splited_pair_first {
+                                    half_edges_splited_pair.first,
+                                    it->st_param,
+                                    param
+                                };
+
+                                // 第二个新分裂出的半边
+                                ListNode half_edges_splited_pair_second {
+                                    half_edges_splited_pair.second,
+                                    param,
+                                    it->ed_param
+                                };
+
+                                // 删除
+                                auto insert_pos = part1.erase(it);
+
+                                // 插入
+                                part1.insert(insert_pos, half_edges_splited_pair_first);
+                                part1.insert(insert_pos, half_edges_splited_pair_second);
+
+                                // 令拆分后新生成的点与当前未有匹配的那个点匹配
+                                part2_vmap[he->GetStart()] = new_vertex;
+                                part1_vmap[new_vertex] = he->GetStart();
+
+                                break;
+                            }
+                        }
+                    }
+                }
+            };
+
+            // 注意：这里顺序会有很大影响！
+            auto merge_match_vertices = [&] (const ListType& part1, const VertexMapType& part1_vmap, const VertexMapType& part2_vmap){
+                int n = 0;
+                // for(auto match_pair: part1_vmap){
+                //     GeometryUtils::CollapseWithTwoVertices(match_pair.first, match_pair.second);
+                //     MarkNum::GetInstance().Test();
+                //     n++;
+                //     SPDLOG_DEBUG("match done. n = {}", n);
+                //     if(n>=1){
+                //         break;
+                //     }
+                // }
+
+                for(auto it = part1.begin(); it != part1.end();it++){
+                    if(it == part1.begin()){
+                        continue;
+                    }
+
+                    auto he = it->halfEdge;
+                    auto st = he->GetStart();
+
+                    if(auto mit = part1_vmap.find(st); mit != part1_vmap.end()){
+                        auto match_vertex = mit->second;
+                        GeometryUtils::CollapseWithTwoVertices(st, match_vertex);
+                        SPDLOG_DEBUG("match done. n: {}", n);
+                    }
+                    else{
+                        SPDLOG_ERROR("match vertex not found in merging match vertices: st: {}, n: {}", MarkNum::GetInstance().GetId(st), n);
+                    }
+
+                    n++;
+
+                    // if(n>=1){
+                    //     break;
+                    // }
+
                 }
             };
 
@@ -1717,6 +2066,9 @@ namespace YamadaMeshFixer{
                 if(ring.size()<2){
                     SPDLOG_ERROR("ring size is less than 2.");
                     break;
+                }
+                else{
+                    SPDLOG_DEBUG("processing ring size: {}", ring.size());
                 }
                 
                 // 1. 分割环
@@ -1746,20 +2098,34 @@ namespace YamadaMeshFixer{
                 // 这里都顺着存吧，一会找对面的时候记得用1减去对面的参数来配对就好
                 ListType part1, part2;
 
-                split_ring(ring, part1, max_index_i, max_index_j);
-                split_ring(ring, part2, max_index_j, max_index_i);
+                split_ring(ring, part1, max_index_i, max_index_j, false);
+                debug_list(part1);
+                split_ring(ring, part2, max_index_j, max_index_i, true);
+                debug_list(part2);
 
                 // -> 根据线段数多寡交换，使得：part1始终是较少的那个，part2始终是较多的那个
                 // （TODO: 存疑，可能没有必要）
 
                 // 2. 配对
+                // 匹配的结果保存在一个map<vertex*, vertex*>里面
+                VertexMapType part1_vmap, part2_vmap;
+                match_vertices(part1, part2, part1_vmap, part2_vmap);
+                debug_map(part1_vmap);
+                debug_map(part2_vmap);
 
                 // 3. 分割多侧并配对
-
                 // 4. 分割少侧并配对
+                split_part(part1, part2, part1_vmap, part2_vmap);
+
+                debug_list(part1);
+                debug_map(part1_vmap);
+                debug_list(part2);
+                debug_map(part2_vmap);
 
                 // 5. 配对点缝合
-
+                merge_match_vertices(part1, part1_vmap, part2_vmap);
+                
+                // break;
             }
         }
 

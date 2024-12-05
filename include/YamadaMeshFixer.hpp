@@ -679,7 +679,7 @@ namespace YamadaMeshFixer{
 
             int new_id;
             // 优先从deletedIdLists中分配id
-            auto deleted_id_list = deletedIdListsMap[topotype_name];
+            auto& deleted_id_list = deletedIdListsMap[topotype_name];
             if(deleted_id_list.size()){
                 new_id = deleted_id_list.front();
                 deleted_id_list.pop_front();

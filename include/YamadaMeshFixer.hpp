@@ -2062,6 +2062,7 @@ namespace YamadaMeshFixer{
                 }
             };
 
+            int rn = 0;
             for(auto ring: rings){
                 if(ring.size()<2){
                     SPDLOG_ERROR("ring size is less than 2.");
@@ -2125,7 +2126,7 @@ namespace YamadaMeshFixer{
                 // 5. 配对点缝合
                 merge_match_vertices(part1, part1_vmap, part2_vmap);
                 
-                // break;
+                if((++rn)>=4) break;
             }
         }
 

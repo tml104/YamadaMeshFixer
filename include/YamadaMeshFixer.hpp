@@ -1849,6 +1849,65 @@ namespace YamadaMeshFixer{
                 }
             };
 
+            auto get_split_ring_indices_by_distance = [&] (const std::vector<std::shared_ptr<HalfEdge>>& ring, int& max_index_i, int& max_index_j) {
+                T_NUM max_dis = MINVAL;
+                max_index_i = -1;
+                max_index_j = -1;
+                for(int i=0;i<ring.size();i++){
+                    for(int j=i+1;j<ring.size();j++){
+                        auto c1 = ring[i]->GetStart()->pointCoord;
+                        auto c2 = ring[j]->GetStart()->pointCoord;
+                        auto dis = c1.Distance(c2);
+
+                        if(dis > max_dis){
+                            max_index_i = i;
+                            max_index_j = j;
+                            max_dis = dis;
+                        }
+                    }
+                }
+            };
+
+            auto get_split_ring_indices_by_balance = [&] (const std::vector<std::shared_ptr<HalfEdge>>& ring, int& max_index_i, int& max_index_j){
+                T_NUM dis_sum = 0.0;
+
+                for(int i=0;i<ring.size();i++){
+                    dis_sum += ring[i]->Length();
+                }
+
+                std::vector<T_NUM> proportions;
+
+                {
+                    T_NUM temp_sum = 0.0;
+                    for(int i=0; i<ring.size(); i++){
+                        proportions.emplace_back(temp_sum / dis_sum);
+                        temp_sum += ring[i]->Length();
+                    }
+                }
+
+                max_index_i = -1;
+                max_index_j = -1;
+                T_NUM temp_proportion = 2.0;
+
+                for(int i=0;i<ring.size();i++){
+
+                    if(proportions[i] > 0.5) {
+                        break;
+                    }
+                    
+                    for(int j=i+1;j<ring.size();j++){
+                        auto new_proportion = std::abs(proportions[j]-proportions[i]-0.5);
+                        if(new_proportion < temp_proportion){
+                            temp_proportion = new_proportion;
+                            max_index_i = i;
+                            max_index_j = j;
+                        }
+                        
+                    }
+                }
+            
+            };
+
             auto split_ring = [&] (std::vector<std::shared_ptr<HalfEdge>>& ring, ListType& part, int max_index_i, int max_index_j, bool reverse_param){
                 T_NUM part_dis_sum = 0.0;
                 for(int i=max_index_i; i != max_index_j;i=(i+1)%ring.size()){
@@ -2085,22 +2144,11 @@ namespace YamadaMeshFixer{
                 }
                 
                 // 1. 分割环
-                T_NUM max_dis = MINVAL;
+                // 此处需要改成：找到两个点，使得这两个点两侧的长度尽可能相同？
                 int max_index_i = -1;
                 int max_index_j = -1;
-                for(int i=0;i<ring.size();i++){
-                    for(int j=i+1;j<ring.size();j++){
-                        auto c1 = ring[i]->GetStart()->pointCoord;
-                        auto c2 = ring[j]->GetStart()->pointCoord;
-                        auto dis = c1.Distance(c2);
-
-                        if(dis > max_dis){
-                            max_index_i = i;
-                            max_index_j = j;
-                            max_dis = dis;
-                        }
-                    }
-                }
+                // get_split_ring_indices_by_distance(ring, max_index_i, max_index_j);
+                get_split_ring_indices_by_balance(ring, max_index_i, max_index_j);
 
                 if(max_index_i == -1 || max_index_j == -1){
                     SPDLOG_ERROR("No found for max_index_i or max_index_j");
@@ -2138,7 +2186,7 @@ namespace YamadaMeshFixer{
                 // 5. 配对点缝合
                 merge_match_vertices(part1, part1_vmap, part2_vmap);
                 
-                if((++rn)>=4) break;
+                // if((++rn)>=4) break;
             }
         }
 

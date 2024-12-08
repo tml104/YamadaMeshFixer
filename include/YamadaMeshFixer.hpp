@@ -1800,7 +1800,19 @@ namespace YamadaMeshFixer{
             for(auto ring: rings){
                 SPDLOG_DEBUG("found ring size: {}", ring.size());
                 for(auto poor_coedge: ring){
-                    SPDLOG_DEBUG("poor_coedge id: {}", MarkNum::GetInstance().GetId(poor_coedge));
+                    SPDLOG_DEBUG("poor_coedge id: {} (st: {} ({}, {}, {}), ed: {} ({}, {}, {}), edge: {}, sense: {})", 
+                        MarkNum::GetInstance().GetId(poor_coedge), 
+                        MarkNum::GetInstance().GetId(poor_coedge->GetStart()), 
+                        (poor_coedge->GetStart()->pointCoord.x()), 
+                        (poor_coedge->GetStart()->pointCoord.y()), 
+                        (poor_coedge->GetStart()->pointCoord.z()), 
+                        MarkNum::GetInstance().GetId(poor_coedge->GetEnd()), 
+                        (poor_coedge->GetEnd()->pointCoord.x()), 
+                        (poor_coedge->GetEnd()->pointCoord.y()), 
+                        (poor_coedge->GetEnd()->pointCoord.z()), 
+                        MarkNum::GetInstance().GetId(poor_coedge->edge), 
+                        poor_coedge->sense
+                    );
                 }
             }
 
@@ -2062,6 +2074,7 @@ namespace YamadaMeshFixer{
                 }
             };
 
+            int r = 0;
             for(auto ring: rings){
                 if(ring.size()<2){
                     SPDLOG_ERROR("ring size is less than 2.");
@@ -2078,7 +2091,7 @@ namespace YamadaMeshFixer{
                 for(int i=0;i<ring.size();i++){
                     for(int j=i+1;j<ring.size();j++){
                         auto c1 = ring[i]->GetStart()->pointCoord;
-                        auto c2 = ring[j]->GetEnd()->pointCoord;
+                        auto c2 = ring[j]->GetStart()->pointCoord;
                         auto dis = c1.Distance(c2);
 
                         if(dis > max_dis){
@@ -2125,7 +2138,8 @@ namespace YamadaMeshFixer{
                 // 5. 配对点缝合
                 merge_match_vertices(part1, part1_vmap, part2_vmap);
                 
-                // break;
+                // if((++r)>=2)break;
+                
             }
         }
 

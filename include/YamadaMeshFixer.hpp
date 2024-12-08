@@ -679,7 +679,7 @@ namespace YamadaMeshFixer{
 
             int new_id;
             // 优先从deletedIdLists中分配id
-            auto deleted_id_list = deletedIdListsMap[topotype_name];
+            auto& deleted_id_list = deletedIdListsMap[topotype_name];
             if(deleted_id_list.size()){
                 new_id = deleted_id_list.front();
                 deleted_id_list.pop_front();
@@ -2074,7 +2074,7 @@ namespace YamadaMeshFixer{
                 }
             };
 
-            int r = 0;
+            int rn = 0;
             for(auto ring: rings){
                 if(ring.size()<2){
                     SPDLOG_ERROR("ring size is less than 2.");
@@ -2138,8 +2138,7 @@ namespace YamadaMeshFixer{
                 // 5. 配对点缝合
                 merge_match_vertices(part1, part1_vmap, part2_vmap);
                 
-                // if((++r)>=2)break;
-                
+                if((++rn)>=4) break;
             }
         }
 

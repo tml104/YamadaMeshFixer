@@ -16,6 +16,8 @@
 #include <iostream>
 #include <chrono>
 #include <vector>
+#include <iomanip>
+#include <sstream>
 
 #include "SpdlogDef.hpp"
 #include <spdlog/spdlog.h>
@@ -62,5 +64,28 @@ namespace Timer
         std::vector<std::pair<std::string, MyClockType>> split_vec;
 
     };
+
+    std::string GetTime(){
+
+        // 获取当前时间点
+        auto now = std::chrono::system_clock::now();
+
+        // 将当前时间点转换为系统时间（time_t）
+        std::time_t t = std::chrono::system_clock::to_time_t(now);
+
+        // 将time_t格式化为字符串
+        std::tm tm = *std::localtime(&t);
+
+        // 使用 std::put_time 输出格式化时间
+        // std::cout << "当前时间是："
+        //         << std::put_time(&tm, "%Y-%m-%d %H:%M:%S") << std::endl;
+
+        // 使用 std::stringstream 存储格式化后的时间
+        std::stringstream ss;
+        ss << std::put_time(&tm, "%Y%m%d%H%M%S");
+
+        // 返回字符串
+        return ss.str();
+    }
 
 }

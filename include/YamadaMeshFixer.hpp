@@ -312,6 +312,8 @@ namespace YamadaMeshFixer{
         std::vector<std::pair<int, int>> solidIndicesRange;
 
         void LoadFromObj(const std::string& obj_path){
+            SPDLOG_INFO("Loading OBJ from: {}", obj_path);
+
             tinyobj::ObjReader reader;
 
             if (!reader.ParseFromFile(obj_path)) {
@@ -359,6 +361,8 @@ namespace YamadaMeshFixer{
                 solidIndicesRange.emplace_back(last_end, indices.size());
                 last_end = indices.size();
             }
+
+            SPDLOG_INFO("Loading OBJ done.");
         }
     
         Coordinate GetPoint(int index){

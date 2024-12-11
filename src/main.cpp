@@ -39,12 +39,17 @@ int main(int argc, char const *argv[]){
     input_args.output_path = args_parser.get_option<std::string>("-o");
 
     // set formatter
-    auto file_logger = spdlog::basic_logger_mt("default_logger", "logs/default_log.log", true);
+    // std::string log_name = "logs/default_log_" + Timer::GetTime() + ".log";
+    auto file_path_split1 = YamadaMeshFixer::Utils::SplitStr(input_args.file_path, '/');
+    auto file_path_split2 = YamadaMeshFixer::Utils::SplitStr(file_path_split1.back(), '.');
+
+    std::string log_name = "logs/log_" + file_path_split2[0] + ".log"; // 现在根据文件名来
+
+    auto file_logger = spdlog::basic_logger_mt("default_logger", log_name, true);
     spdlog::set_default_logger(file_logger);
 
     spdlog::set_pattern("[%H:%M:%S %z] [%^%L%$] [thread %t] [%s] [%@] [%!] %v");
     spdlog::set_level(spdlog::level::trace);
-
 
     // load obj
     YamadaMeshFixer::ObjInfo obj_info;

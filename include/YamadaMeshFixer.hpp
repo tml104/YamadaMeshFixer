@@ -1670,6 +1670,59 @@ namespace YamadaMeshFixer{
             // TODO
         }
 
+        void Test(){
+            SPDLOG_INFO("start.");
+
+            // 先临时弄成循环遍历那样？
+            int poor_coedge_count[11];
+            memset(poor_coedge_count, 0, sizeof(poor_coedge_count));
+
+            for(auto f: solid_ptr->faces){
+                auto lp = f->st;
+
+                auto i_half_edge = lp->st;
+
+                do{
+                    if(i_half_edge == nullptr){
+                        SPDLOG_ERROR("i_half_edge is null");
+                        break;
+                    }
+
+                    // 此处已经遍历到了所有halfedges
+                    int partner_count = GeometryUtils::EdgePartnerCount(i_half_edge->edge);
+                    if(partner_count >= 1){
+                        // [有效性检查]
+                        if(i_half_edge->GetStart() == nullptr){
+                            SPDLOG_ERROR("poor coedge found, but NO START: {}", MarkNum::GetInstance().GetId(i_half_edge));
+                        }
+                        if(i_half_edge->GetEnd() == nullptr){
+                            SPDLOG_ERROR("poor coedge found, but NO END: {}", MarkNum::GetInstance().GetId(i_half_edge));
+                        }
+                        // [有效性检查] END
+                        
+                        // 贡献
+                        if(partner_count <= 10){
+                            poor_coedge_count[partner_count]++;
+                        }
+                        else{
+                            poor_coedge_count[0]++;
+                        }
+
+                    }
+
+                    i_half_edge = i_half_edge->next;
+                }while(i_half_edge && i_half_edge != lp->st);
+
+            }
+
+            for(int i=1;i<=10;i++){
+                SPDLOG_INFO("test poor coedge total num for nonmanifold {}: {}", i, poor_coedge_count[i]);
+            }
+
+
+            SPDLOG_INFO("end.");
+        }
+
     private:
 
         /*
@@ -1719,7 +1772,7 @@ namespace YamadaMeshFixer{
 
             }
 
-            SPDLOG_DEBUG("poor coedge total num: {}", static_cast<int>(poorCoedges.size()));
+            SPDLOG_INFO("poor coedge total num: {}", static_cast<int>(poorCoedges.size()));
             SPDLOG_INFO("end.");
         }
 

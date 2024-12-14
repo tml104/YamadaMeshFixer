@@ -64,6 +64,8 @@ int main(int argc, char const *argv[]){
     for(auto solid: YamadaMeshFixer::MarkNum::GetInstance().solids){
         YamadaMeshFixer::StitchFixer2 stitchFixer(solid);
         stitchFixer.Start(true);
+
+        stitchFixer.Test();
     }
 
     YamadaMeshFixer::MarkNum::GetInstance().ExportSolidsToOBJ(input_args.output_path);

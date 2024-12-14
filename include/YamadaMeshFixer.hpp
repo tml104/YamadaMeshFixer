@@ -1639,10 +1639,11 @@ namespace YamadaMeshFixer{
 
     struct StitchFixer2{
     public:
-        std::shared_ptr<Solid> solid_ptr;
-        std::vector<std::shared_ptr<HalfEdge>> poorCoedges;
 
-        std::vector<std::vector<std::shared_ptr<HalfEdge>>> rings;
+        std::shared_ptr<Solid> solid_ptr;
+        std::vector<std::shared_ptr<Edge>> poorEdges;
+
+        std::vector<std::vector<std::shared_ptr<Edge>>> rings;
 
         StitchFixer2(const std::shared_ptr<Solid>& solid): solid_ptr(solid){}
 
@@ -1651,9 +1652,7 @@ namespace YamadaMeshFixer{
 
             Clear();
 
-            FindPoorCoedge();
-            // SplitTest();
-            // CollapseTest();
+            FindPoorEdges();
             FindRings();
             DoRings();
 
@@ -1662,7 +1661,7 @@ namespace YamadaMeshFixer{
         }
 
         void Clear(){
-            poorCoedges.clear();
+            poorEdges.clear();
             rings.clear();
         }
 
@@ -1716,7 +1715,7 @@ namespace YamadaMeshFixer{
             }
 
             for(int i=1;i<=10;i++){
-                SPDLOG_INFO("test poor coedge total num for nonmanifold {}: {}", i, poor_coedge_count[i]);
+                SPDLOG_INFO("test poor edge total num for nonmanifold {}: {}", i, poor_coedge_count[i]);
             }
 
 
@@ -1729,7 +1728,7 @@ namespace YamadaMeshFixer{
             调用顺序：1
             找破边，并保存到poor_coedge_vec中
         */
-        void FindPoorCoedge(){
+        void FindPoorEdges(){
             SPDLOG_INFO("start.");
 
             // 先临时弄成循环遍历那样？
@@ -1747,7 +1746,11 @@ namespace YamadaMeshFixer{
 
                     // 此处已经遍历到了所有halfedges
                     int partner_count = GeometryUtils::EdgePartnerCount(i_half_edge->edge);
-                    if(partner_count == 1){
+
+                    // 版本1：当Edge的count为奇数时，满足作为poorEdge的条件
+                    // 版本2：当Edge的count为1或者3以上的非流形边时（偶数也算），满足作为poorEdge的条件
+                    // 目前以版本1为这里的实现
+                    if(partner_count % 2){
                         // [有效性检查]
                         if(i_half_edge->GetStart() == nullptr){
                             SPDLOG_ERROR("poor coedge found, but NO START: {}", MarkNum::GetInstance().GetId(i_half_edge));
@@ -1755,120 +1758,51 @@ namespace YamadaMeshFixer{
                         if(i_half_edge->GetEnd() == nullptr){
                             SPDLOG_ERROR("poor coedge found, but NO END: {}", MarkNum::GetInstance().GetId(i_half_edge));
                         }
-
-                        if(i_half_edge->edge == nullptr){
-                            SPDLOG_ERROR("poor coedge found, but NO EDGE: {}", MarkNum::GetInstance().GetId(i_half_edge));
-                        }
-
                         // [有效性检查] END
                         
                         // 构造poor_coedge
-                        poorCoedges.emplace_back((i_half_edge));
+                        poorEdges.emplace_back(i_half_edge->edge);
 
                     }
-
+                    
                     i_half_edge = i_half_edge->next;
                 }while(i_half_edge && i_half_edge != lp->st);
-
             }
 
-            SPDLOG_INFO("poor coedge total num: {}", static_cast<int>(poorCoedges.size()));
+            SPDLOG_INFO("poor edges total num: {}", static_cast<int>(poorEdges.size()));
             SPDLOG_INFO("end.");
         }
 
         /*
             调用顺序：2
             找环，并保存到rings中
-            TODO: 如果要是遇到仙人掌图这里复杂度会特别高
+            现在改用找点双分量的方法
         */
         void FindRings(){
             SPDLOG_INFO("start.");
 
-            std::map<std::shared_ptr<Vertex>, std::shared_ptr<HalfEdge>> st_map, ed_map;
-            
-            // 插入边的首尾顶点
-            for(auto poor_coedge: poorCoedges){
-                auto st = poor_coedge->GetStart();
-                auto ed = poor_coedge->GetEnd();
-
-                if(st_map.find(st) == st_map.end()){
-                    st_map[st] = poor_coedge;
-                }
-                else{
-                    SPDLOG_ERROR("st_map[st] is already exist!");
-                }
-
-                if(ed_map.find(ed) == ed_map.end()){
-                    ed_map[ed] = poor_coedge;
-                }
-                else{
-                    SPDLOG_ERROR("ed_map[st] is already exist!");
-                }
-            }
-
-            std::set<std::shared_ptr<HalfEdge>> flags;
-
-            for(int i=0;i<poorCoedges.size();i++){
-                auto poor_coedge = poorCoedges[i];
-                if(flags.count(poor_coedge) == 0){
-                    auto i_poor_coedge = poor_coedge;
-
-                    std::vector<std::shared_ptr<HalfEdge>> ring;
-                    bool break_flag = false;
-
-                    do{
-                        if(i_poor_coedge == nullptr){
-                            SPDLOG_ERROR("i_poor_coedge is nullptr");
-                            break_flag = true;
-                            break;
-
-                        }
-                        if(flags.count(i_poor_coedge)){
-                            SPDLOG_ERROR("i_poor_coedge has visited: {}", MarkNum::GetInstance().GetId(i_poor_coedge));
-                            break_flag = true;
-                            break;
-                        }
-
-                        auto ed = i_poor_coedge->GetEnd();
-                        ring.emplace_back(i_poor_coedge);
-                        flags.insert(i_poor_coedge);
-                    
-                        i_poor_coedge = st_map[ed];
-
-                    }while(i_poor_coedge != poor_coedge);
-
-                    if(break_flag == false){
-                        SPDLOG_DEBUG("ring added.");
-                        rings.emplace_back(ring);
-                    }else{
-                        SPDLOG_DEBUG("no ring.");
-                        // 撤销对flags的修改
-                        for(auto p: ring){
-                            flags.erase(p);
-                        }
-                    }
-                }
-
-            }
+            // std::map<std::shared_ptr<Vertex>, std::shared_ptr<HalfEdge>> st_map, ed_map;
             
             // 打印rings中已经找到的环的信息
             SPDLOG_DEBUG("rings size: {}", rings.size());
 
+            // TODO: 确定无向图点双连通分量，并且确定各个点双连通分量里面是否是构成环
+
+
+
             for(auto ring: rings){
                 SPDLOG_DEBUG("found ring size: {}", ring.size());
-                for(auto poor_coedge: ring){
-                    SPDLOG_DEBUG("poor_coedge id: {} (st: {} ({}, {}, {}), ed: {} ({}, {}, {}), edge: {}, sense: {})", 
-                        MarkNum::GetInstance().GetId(poor_coedge), 
-                        MarkNum::GetInstance().GetId(poor_coedge->GetStart()), 
-                        (poor_coedge->GetStart()->pointCoord.x()), 
-                        (poor_coedge->GetStart()->pointCoord.y()), 
-                        (poor_coedge->GetStart()->pointCoord.z()), 
-                        MarkNum::GetInstance().GetId(poor_coedge->GetEnd()), 
-                        (poor_coedge->GetEnd()->pointCoord.x()), 
-                        (poor_coedge->GetEnd()->pointCoord.y()), 
-                        (poor_coedge->GetEnd()->pointCoord.z()), 
-                        MarkNum::GetInstance().GetId(poor_coedge->edge), 
-                        poor_coedge->sense
+                for(auto poor_edge: ring){
+                    SPDLOG_DEBUG("poor_edge id: {} (st: {} ({}, {}, {}), ed: {} ({}, {}, {}))", 
+                        MarkNum::GetInstance().GetId(poor_edge), 
+                        MarkNum::GetInstance().GetId(poor_edge->st), 
+                        (poor_edge->st->pointCoord.x()), 
+                        (poor_edge->st->pointCoord.y()), 
+                        (poor_edge->st->pointCoord.z()), 
+                        MarkNum::GetInstance().GetId(poor_edge->ed), 
+                        (poor_edge->ed->pointCoord.x()), 
+                        (poor_edge->ed->pointCoord.y()), 
+                        (poor_edge->ed->pointCoord.z())
                     );
                 }
             }
@@ -2248,32 +2182,32 @@ namespace YamadaMeshFixer{
         }
 
 
-        void SplitTest(){
-            for(auto he: poorCoedges){
-                GeometryUtils::SplitHalfEdge(he, 0.5);
-            }
-        }
+        // void SplitTest(){
+        //     for(auto he: poorCoedges){
+        //         GeometryUtils::SplitHalfEdge(he, 0.5);
+        //     }
+        // }
 
-        void CollapseTest(){
-            int n = 0;
-            for(auto he: poorCoedges){
-                if(true){
-                    if(auto he_it = MarkNum::GetInstance().markNumMap.find(he.get()); he_it != MarkNum::GetInstance().markNumMap.end())
-                    {
-                        // SPDLOG_DEBUG("Collapsing he: {} ({} {})", he_it->second.second, MarkNum::GetInstance().markNumMap[he->GetStart().get()].second, MarkNum::GetInstance().markNumMap[he->GetEnd().get()].second);
-                        GeometryUtils::CollapseHalfEdge(he);
-                        MarkNum::GetInstance().Test();
-                    }
-                    else{
-                        SPDLOG_ERROR("Collapsing he is not exist in markNumMap.");
-                    }
-                }
-                else{
-                    break;
-                }
-                n++;
-            }
-        }
+        // void CollapseTest(){
+        //     int n = 0;
+        //     for(auto he: poorCoedges){
+        //         if(true){
+        //             if(auto he_it = MarkNum::GetInstance().markNumMap.find(he.get()); he_it != MarkNum::GetInstance().markNumMap.end())
+        //             {
+        //                 // SPDLOG_DEBUG("Collapsing he: {} ({} {})", he_it->second.second, MarkNum::GetInstance().markNumMap[he->GetStart().get()].second, MarkNum::GetInstance().markNumMap[he->GetEnd().get()].second);
+        //                 GeometryUtils::CollapseHalfEdge(he);
+        //                 MarkNum::GetInstance().Test();
+        //             }
+        //             else{
+        //                 SPDLOG_ERROR("Collapsing he is not exist in markNumMap.");
+        //             }
+        //         }
+        //         else{
+        //             break;
+        //         }
+        //         n++;
+        //     }
+        // }
 
     };
 

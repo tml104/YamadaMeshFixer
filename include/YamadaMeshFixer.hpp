@@ -1787,6 +1787,147 @@ namespace YamadaMeshFixer{
             SPDLOG_DEBUG("rings size: {}", rings.size());
 
             // TODO: 确定无向图点双连通分量，并且确定各个点双连通分量里面是否是构成环
+            {
+                struct TarjanNode{
+                    int dfn, low; // dfn, low: dfs遍历序以及最小可追溯值
+                    int c; // c: 一般点所属的edcc编号
+                    bool is_cut; // is_cut: 是否为割点
+                };
+
+                struct TarjanEdge{
+                    int to_vertex_id; // to: 顶点id
+                    int inext; // 临时下标
+                    std::shared_ptr<Edge> original_edge;
+                };
+
+                std::map<int, TarjanNode> tarjan_nodes;
+                std::vector<TarjanEdge> tarjan_edges;
+                std::map<int, int> head; // node_id -> start tarjan_edge
+
+                int dfn = 0;
+                std::vector<std::vector<int>> vdccs;
+
+                // std::map<std::shared_ptr<Edge>, int> poor_edge_to_vdccid;
+                std::vector<std::vector<std::shared_ptr<Edge>>> poor_edge_vdccs; // 也许只需要一个？
+
+                struct StackNode{
+                    int vertex_id;
+                    int from_tarjan_edge;
+                };
+
+                std::vector<StackNode> st;
+
+                auto add_tarjan_edge = [&] (const std::shared_ptr<Edge>& original_edge){
+                    int from_vertex_id = MarkNum::GetInstance().GetId(original_edge->st);
+                    int to_vertex_id = MarkNum::GetInstance().GetId(original_edge->ed);
+
+                    if(tarjan_nodes.count(from_vertex_id) == 0){
+                        TarjanNode tn;
+                        tn.dfn = tn.low = 0;
+                        tn.c = -1;
+                        tn.is_cut = false;
+
+                        tarjan_nodes[from_vertex_id] = tn;
+                    }
+
+                    if(tarjan_nodes.count(to_vertex_id) == 0){
+                        TarjanNode tn;
+                        tn.dfn = tn.low = 0;
+                        tn.c = -1;
+                        tn.is_cut = false;
+
+                        tarjan_nodes[to_vertex_id] = tn;
+                    }
+
+                    // 正
+                    TarjanEdge te;
+                    te.to_vertex_id = to_vertex_id;
+                    if(head.count(from_vertex_id)){
+                        te.inext = head[from_vertex_id];
+                    }
+                    else{
+                        te.inext = -1;
+                    }
+                    te.original_edge = original_edge;
+
+                    head[from_vertex_id] = tarjan_edges.size();
+                    tarjan_edges.emplace_back(te);
+
+                    // 反
+                    TarjanEdge te2;
+                    te2.to_vertex_id = from_vertex_id;
+                    if(head.count(to_vertex_id)){
+                        te2.inext = head[to_vertex_id];
+                    }
+                    else{
+                        te2.inext = -1;
+                    }
+                    te2.original_edge = original_edge;
+
+                    head[to_vertex_id] = tarjan_edges.size();
+                    tarjan_edges.emplace_back(te2);
+
+                };
+
+                std::function<void(int, int)> tarjan = [&] (int x_vertex_id, int root_vertex_id) -> void {
+                    tarjan_nodes[x_vertex_id].dfn = tarjan_nodes[x_vertex_id].low = ++dfn;
+                    if(x_vertex_id == root_vertex_id && head.count(x_vertex_id) == 0){ // 孤立点
+                        vdccs.emplace_back();
+                        vdccs.back().emplace_back(x_vertex_id);
+
+                        return ;
+                    }
+
+                    StackNode sn;
+                    sn.vertex_id = x_vertex_id;
+                    // sn.from_tarjan_edge = -1; // TODO: 这个在递归情况下应该赋值的
+                    st.emplace_back(sn);
+
+                    int flag = 0;
+                    for(int e = head[x_vertex_id]; e!=-1; e=tarjan_edges[e].inext){
+
+                        int y = tarjan_edges[e].to_vertex_id;
+                        if(!tarjan_nodes[y].dfn){
+                            tarjan(y, root_vertex_id);
+                            tarjan_nodes[x_vertex_id].low = std::min(tarjan_nodes[x_vertex_id].low, tarjan_nodes[y].low);
+
+                            if(tarjan_nodes[x_vertex_id].dfn <= tarjan_nodes[y].low){
+                                flag++;
+                                if(x_vertex_id != root_vertex_id || flag >1){
+                                    tarjan_nodes[x_vertex_id].is_cut = true;
+                                }
+
+                                vdccs.emplace_back();
+                                int z;
+                                do{
+                                    StackNode sn2 = st.back();
+                                    st.pop_back();
+                                    z = sn2.vertex_id;
+                                    int ze = sn2.from_tarjan_edge;
+
+                                    vdccs.back().emplace_back(z);
+                                    if(ze != -1){
+
+                                    }
+
+                                } while(z!=y);
+                                vdccs.back().emplace_back(x_vertex_id);
+                            }
+                        }
+                    }
+                };
+
+                for(auto pe: poorEdges){
+                    add_tarjan_edge(pe);
+                }
+
+                for(auto tn_pair: tarjan_nodes){
+                    if(tn_pair.second.dfn==0){
+                        tarjan(tn_pair.first, tn_pair.first);
+                    }
+                }
+            }
+
 
 
 
@@ -2182,32 +2323,32 @@ namespace YamadaMeshFixer{
         }
 
 
-        // void SplitTest(){
-        //     for(auto he: poorCoedges){
-        //         GeometryUtils::SplitHalfEdge(he, 0.5);
-        //     }
-        // }
+        void SplitTest(){
+            for(auto e: poorEdges){
+                GeometryUtils::SplitEdge(e, 0.5);
+            }
+        }
 
-        // void CollapseTest(){
-        //     int n = 0;
-        //     for(auto he: poorCoedges){
-        //         if(true){
-        //             if(auto he_it = MarkNum::GetInstance().markNumMap.find(he.get()); he_it != MarkNum::GetInstance().markNumMap.end())
-        //             {
-        //                 // SPDLOG_DEBUG("Collapsing he: {} ({} {})", he_it->second.second, MarkNum::GetInstance().markNumMap[he->GetStart().get()].second, MarkNum::GetInstance().markNumMap[he->GetEnd().get()].second);
-        //                 GeometryUtils::CollapseHalfEdge(he);
-        //                 MarkNum::GetInstance().Test();
-        //             }
-        //             else{
-        //                 SPDLOG_ERROR("Collapsing he is not exist in markNumMap.");
-        //             }
-        //         }
-        //         else{
-        //             break;
-        //         }
-        //         n++;
-        //     }
-        // }
+        void CollapseTest(){
+            int n = 0;
+            for(auto e: poorEdges){
+                if(true){
+                    if(auto e_it = MarkNum::GetInstance().markNumMap.find(e.get()); e_it != MarkNum::GetInstance().markNumMap.end())
+                    {
+                        // SPDLOG_DEBUG("Collapsing he: {} ({} {})", he_it->second.second, MarkNum::GetInstance().markNumMap[he->GetStart().get()].second, MarkNum::GetInstance().markNumMap[he->GetEnd().get()].second);
+                        GeometryUtils::CollapseEdge(e);
+                        MarkNum::GetInstance().Test();
+                    }
+                    else{
+                        SPDLOG_ERROR("Collapsing e is not exist in markNumMap.");
+                    }
+                }
+                else{
+                    break;
+                }
+                n++;
+            }
+        }
 
     };
 

@@ -1786,7 +1786,9 @@ namespace YamadaMeshFixer{
             // 打印rings中已经找到的环的信息
             SPDLOG_DEBUG("rings size: {}", rings.size());
 
-            // TODO: 确定无向图点双连通分量，并且确定各个点双连通分量里面是否是构成环
+            std::map<int, std::vector<std::shared_ptr<Edge>>> vdcc_to_poor_edges; // tarjan部分的输出：保存对应vdcc中的边（顺序不一定，如果vdcc是孤立点也可能为空）; vdcc_id -> edges
+
+            // 确定无向图点双连通分量，并且确定各个点双连通分量里面是否是构成环
             {
                 struct TarjanNode{
                     int dfn, low; // dfn, low: dfs遍历序以及最小可追溯值
@@ -1797,7 +1799,7 @@ namespace YamadaMeshFixer{
                 struct TarjanEdge{
                     int to_vertex_id; // to: 顶点id
                     int inext; // 临时下标
-                    std::shared_ptr<Edge> original_edge;
+                    std::shared_ptr<Edge> original_edge; // 这个实际上没用
                 };
 
                 std::map<int, TarjanNode> tarjan_nodes;
@@ -1806,16 +1808,9 @@ namespace YamadaMeshFixer{
 
                 int dfn = 0;
                 std::vector<std::vector<int>> vdccs;
+                std::map<int, std::set<int>> vertex_to_vdcc; // 在求得vdccs之后，通过变换得到，用来求边在哪个vdcc里面
 
-                // std::map<std::shared_ptr<Edge>, int> poor_edge_to_vdccid;
-                std::vector<std::vector<std::shared_ptr<Edge>>> poor_edge_vdccs; // 也许只需要一个？
-
-                struct StackNode{
-                    int vertex_id;
-                    int from_tarjan_edge;
-                };
-
-                std::vector<StackNode> st;
+                std::vector<int> st; // 保存顶点id的栈
 
                 auto add_tarjan_edge = [&] (const std::shared_ptr<Edge>& original_edge){
                     int from_vertex_id = MarkNum::GetInstance().GetId(original_edge->st);
@@ -1878,10 +1873,7 @@ namespace YamadaMeshFixer{
                         return ;
                     }
 
-                    StackNode sn;
-                    sn.vertex_id = x_vertex_id;
-                    // sn.from_tarjan_edge = -1; // TODO: 这个在递归情况下应该赋值的
-                    st.emplace_back(sn);
+                    st.emplace_back(x_vertex_id);
 
                     int flag = 0;
                     for(int e = head[x_vertex_id]; e!=-1; e=tarjan_edges[e].inext){
@@ -1900,35 +1892,74 @@ namespace YamadaMeshFixer{
                                 vdccs.emplace_back();
                                 int z;
                                 do{
-                                    StackNode sn2 = st.back();
+                                    z = st.back();
                                     st.pop_back();
-                                    z = sn2.vertex_id;
-                                    int ze = sn2.from_tarjan_edge;
-
                                     vdccs.back().emplace_back(z);
-                                    if(ze != -1){
-
-                                    }
-
                                 } while(z!=y);
                                 vdccs.back().emplace_back(x_vertex_id);
                             }
                         }
+                        else{
+                            tarjan_nodes[x_vertex_id].low = std::min(tarjan_nodes[x_vertex_id].low, tarjan_nodes[y].dfn);
+                        }
                     }
                 };
 
+                // 添加用来执行tarjan算法的边
                 for(auto pe: poorEdges){
                     add_tarjan_edge(pe);
                 }
 
+                // 对每个没被遍历过的点执行tarjan，找出点双
                 for(auto tn_pair: tarjan_nodes){
                     if(tn_pair.second.dfn==0){
                         tarjan(tn_pair.first, tn_pair.first);
                     }
                 }
+
+                // 通过vdccs构造vertex_to_vdcc
+                for(int i=0;i<vdccs.size();i++){
+                    auto& vs = vdccs[i];
+                    for(auto v: vs){
+                        vertex_to_vdcc[v].insert(i);
+                    }
+                }
+
+                // 遍历每个边，取得首尾顶点的对应vdcc集合，将集合求交后获得交集，检查交集中是否应该只有一个元素，如果是的话那么那个元素就是对应边所属vdcc
+                for(auto pe: poorEdges){
+                    int st_id = MarkNum::GetInstance().GetId(pe->st);
+                    int ed_id = MarkNum::GetInstance().GetId(pe->ed);
+
+                    auto st_vdccs = vertex_to_vdcc[st_id];
+                    auto ed_vdccs = vertex_to_vdcc[ed_id];
+
+                    std::set<int> intersected_vdccs;
+                    set_intersection(st_vdccs.begin(), st_vdccs.end(), ed_vdccs.begin(), ed_vdccs.end(), intersected_vdccs.begin());
+
+                    if(intersected_vdccs.size() == 1){
+                        auto vdcc_id = *intersected_vdccs.begin();
+                        vdcc_to_poor_edges[vdcc_id].emplace_back(pe);
+                    }
+                    else{
+                        SPDLOG_ERROR("size of intersected_vdccs not equal to 1: size: {}, pe: {}", intersected_vdccs.size(), MarkNum::GetInstance().GetId(pe));
+                    }
+                }
             }
 
 
+            // 取得强连通分量中的边集合，然后检查边是否满足串成一个环
+            for(auto vdcc2edges_pair: vdcc_to_poor_edges){
+                int vdcc_id = vdcc2edges_pair.first;
+                auto edges = vdcc2edges_pair.second;
+                
+                SPDLOG_DEBUG("edges size of vdcc {}: {}", vdcc_id, edges.size());
+                if(edges.size() >=2){
+                    // TODO: 稍等，这里说不定需要另一个类来包装一下poor edge的成环方向
+                }
+                else{
+                    SPDLOG_DEBUG("edges size of vdcc {} is less than 2.", vdcc_id);
+                }
+            }
 
 
             for(auto ring: rings){

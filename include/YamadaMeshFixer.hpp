@@ -1988,7 +1988,8 @@ namespace YamadaMeshFixer{
                     if(flag){
                         std::set<std::shared_ptr<Edge>> visited_edges;
                         // 这里就比较有意思了，可能要先去找一个单面边（红边），以其为基准作为初始的内容
-
+                        // TODO: 目前先粗暴一点，如果没有红边就不管了
+                        
                     }
                 }
                 else{

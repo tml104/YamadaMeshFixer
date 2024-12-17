@@ -125,7 +125,7 @@ namespace YamadaMeshFixer{
 
         bool operator==(const Coordinate& other_coord) const {
             for(int i=0;i<3;i++){
-                if(abs(other_coord[i] - coords[i])>GLOBAL_TOLERANCE ){
+                if(std::abs(other_coord[i] - coords[i])>GLOBAL_TOLERANCE ){
                     return false;
                 }
             }
@@ -222,6 +222,14 @@ namespace YamadaMeshFixer{
             for(int i=0;i<3;i++){
                 coords[i] /= length;
             }
+        }
+
+        T_NUM Volume(const Coordinate& other_coord) const {
+            T_NUM x_length = std::abs(coords[0] - other_coord[0]);
+            T_NUM y_length = std::abs(coords[1] - other_coord[1]);
+            T_NUM z_length = std::abs(coords[2] - other_coord[2]);
+
+            return x_length * y_length * z_length;
         }
     };
 
@@ -1636,7 +1644,7 @@ namespace YamadaMeshFixer{
     
     }
 
-
+    // TODO: 把一些阈值改成变量
     struct StitchFixer2{
     public:
 
@@ -1685,6 +1693,8 @@ namespace YamadaMeshFixer{
         using RingType = std::vector<PoorEdge>;
         std::vector<RingType> rings;
 
+        Coordinate lower_bound_coord{MAXVAL, MAXVAL, MAXVAL}, upper_bound_coord{MINVAL, MINVAL, MINVAL};
+
         StitchFixer2(const std::shared_ptr<Solid>& solid): solid_ptr(solid){}
 
         bool Start(bool call_fix){
@@ -1692,9 +1702,19 @@ namespace YamadaMeshFixer{
 
             Clear();
 
+            CollapseSameVertices();
+            CalculateBoundingBox();
             FindPoorEdges();
             FindRings();
-            DoRings();
+            bool res = CheckRingsBox();
+            if(res)
+            {
+                DoRings();
+            }
+            else{
+                SPDLOG_INFO("End.");
+                return false;
+            }
 
             SPDLOG_INFO("End.");
             return true;
@@ -1703,6 +1723,8 @@ namespace YamadaMeshFixer{
         void Clear(){
             poorEdges.clear();
             rings.clear();
+            lower_bound_coord = Coordinate{MAXVAL, MAXVAL, MAXVAL};
+            upper_bound_coord = Coordinate{MINVAL, MINVAL, MINVAL};
         }
 
         void Status(){
@@ -1763,6 +1785,129 @@ namespace YamadaMeshFixer{
         }
 
     private:
+
+        void CollapseSameVertices(){
+            SPDLOG_INFO("start.");
+
+            std::set<std::shared_ptr<Edge>> degeneratedEdges;
+
+            do{
+                degeneratedEdges.clear();
+
+                for(auto f: solid_ptr->faces){
+                    auto lp = f->st;
+                    auto i_half_edge = lp->st;
+
+                    do{
+                        if(i_half_edge == nullptr){
+                            SPDLOG_ERROR("i_half_edge is null");
+                            break;
+                        }
+
+                        auto i_edge = i_half_edge->edge;
+                        if(i_edge != nullptr && i_edge->st->pointCoord == i_edge->ed->pointCoord){ // 首尾相同
+                            SPDLOG_DEBUG("same vertices for edge: {}, half_edge: {}, st: {} ({} {} {}), ed: {} ({} {} {})",
+                                MarkNum::GetInstance().GetId(i_edge),
+                                MarkNum::GetInstance().GetId(i_half_edge),
+                                MarkNum::GetInstance().GetId(i_edge->st),
+                                i_edge->st->pointCoord.x(),
+                                i_edge->st->pointCoord.y(),
+                                i_edge->st->pointCoord.z(),
+                                MarkNum::GetInstance().GetId(i_edge->ed),
+                                i_edge->ed->pointCoord.x(),
+                                i_edge->ed->pointCoord.y(),
+                                i_edge->ed->pointCoord.z()
+                            );
+
+                            degeneratedEdges.insert(i_edge);
+                        }
+
+                        i_half_edge = i_half_edge->next;
+                    }while(i_half_edge && i_half_edge != lp->st);
+                }
+
+                SPDLOG_DEBUG("degeneratedEdges size: {}", degeneratedEdges.size());
+                
+                for(auto de: degeneratedEdges){
+                    SPDLOG_DEBUG("degenerated edge will be collapsed: {}", MarkNum::GetInstance().GetId(de));
+                    GeometryUtils::CollapseEdge(de);
+                }
+
+            }while(degeneratedEdges.size());
+
+            SPDLOG_INFO("end.");
+        }
+
+        void CalculateBoundingBox(){
+            SPDLOG_INFO("start.");
+
+            lower_bound_coord = Coordinate{MAXVAL, MAXVAL, MAXVAL};
+            upper_bound_coord = Coordinate{MINVAL, MINVAL, MINVAL};
+
+            for(auto f: solid_ptr->faces){
+                auto lp = f->st;
+                auto i_half_edge = lp->st;
+
+                do{
+                    if(i_half_edge == nullptr){
+                        SPDLOG_ERROR("i_half_edge is null");
+                        break;
+                    }
+
+                    auto st = i_half_edge->GetStart();
+                    auto ed = i_half_edge->GetEnd();
+
+                    lower_bound_coord = lower_bound_coord.Min(st->pointCoord);
+                    lower_bound_coord = lower_bound_coord.Min(ed->pointCoord);
+
+                    upper_bound_coord = upper_bound_coord.Max(st->pointCoord);
+                    upper_bound_coord = upper_bound_coord.Max(ed->pointCoord);
+                    
+                    i_half_edge = i_half_edge->next;
+                }while(i_half_edge && i_half_edge != lp->st);
+            }
+
+            SPDLOG_INFO("end.");
+        }
+
+        std::pair<Coordinate, Coordinate> CalculateRingBox(const RingType& ring){
+            std::pair<Coordinate, Coordinate> ans{{MAXVAL, MAXVAL, MAXVAL}, {MINVAL, MINVAL, MINVAL}};
+            
+            for(auto& pe: ring){
+                auto st = pe.GetStart();
+                auto ed = pe.GetEnd();
+
+                ans.first = ans.first.Min(st->pointCoord);
+                ans.first = ans.first.Min(ed->pointCoord);
+
+                ans.second = ans.second.Max(st->pointCoord);
+                ans.second = ans.second.Max(ed->pointCoord);
+            }
+
+            return ans;
+        }
+
+        bool CheckRingsBox(){
+            SPDLOG_INFO("start.");
+
+            // 模型的包围盒体积
+            T_NUM solid_box_volume = lower_bound_coord.Volume(upper_bound_coord);
+
+            for(auto& ring: rings){
+                auto box_point_pair = CalculateRingBox(ring);
+                T_NUM ring_box_volume = box_point_pair.first.Volume(box_point_pair.second);
+
+                if(ring_box_volume / solid_box_volume > 0.9){ // 这个值合适吗
+                    SPDLOG_DEBUG("ring_box_volume / solid_box_volume > 0.9: ring size: {}", ring.size());
+                    SPDLOG_INFO("end.");
+                    return false;
+                }
+            }
+
+            SPDLOG_INFO("end.");
+
+            return true;
+        }
 
         /*
             调用顺序：1

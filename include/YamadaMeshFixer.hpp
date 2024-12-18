@@ -29,7 +29,7 @@ namespace YamadaMeshFixer{
 
 
     using T_NUM = double;
-    const T_NUM GLOBAL_TOLERANCE = 1e-6;
+    const T_NUM GLOBAL_TOLERANCE = 1e-12;
 
     const T_NUM EPSLION1 = 0.05;
     const T_NUM EPSLION2 = cos(M_PI / 6);
@@ -37,6 +37,7 @@ namespace YamadaMeshFixer{
     const T_NUM EPSLION2_SIN = sqrt(1.0 - EPSLION2 * EPSLION2);
 
     const T_NUM PARAM_EPSLION = 0.05; // 用于分割时配对点用的
+    const T_NUM VOLUME_PROPORTION_THRESHOLD = 0.9;
 
   	const T_NUM MINVAL = -1e9;
 	const T_NUM MAXVAL = 1e9;
@@ -1644,7 +1645,6 @@ namespace YamadaMeshFixer{
     
     }
 
-    // TODO: 把一些阈值改成变量
     struct StitchFixer2{
     public:
 
@@ -1897,8 +1897,8 @@ namespace YamadaMeshFixer{
                 auto box_point_pair = CalculateRingBox(ring);
                 T_NUM ring_box_volume = box_point_pair.first.Volume(box_point_pair.second);
 
-                if(ring_box_volume / solid_box_volume > 0.9){ // 这个值合适吗
-                    SPDLOG_DEBUG("ring_box_volume / solid_box_volume > 0.9: ring size: {}", ring.size());
+                if(ring_box_volume / solid_box_volume > VOLUME_PROPORTION_THRESHOLD){ // 这个值合适吗
+                    SPDLOG_DEBUG("ring_box_volume / solid_box_volume > {}: ring size: {}", ring.size(), VOLUME_PROPORTION_THRESHOLD);
                     SPDLOG_INFO("end.");
                     return false;
                 }
@@ -2157,7 +2157,7 @@ namespace YamadaMeshFixer{
                         SPDLOG_DEBUG("This vdcc {} is a loop.", vdcc_id);
 
                         // 这里就比较有意思了，可能要先去找一个单面边（红边），以其为基准作为初始的内容
-                        // TODO: 目前先粗暴一点，如果没有红边就不管了
+                        // 目前先粗暴一点，如果没有红边就不管了
                         std::shared_ptr<Edge> candidate_poor_edge = nullptr;
                         for(auto pe: edges){
                             if(GeometryUtils::EdgePartnerCount(pe) == 1){
@@ -2400,7 +2400,7 @@ namespace YamadaMeshFixer{
                     auto most_right_it = part1.end();
 
                     while(it != part1.end() && it->st_param <= param){
-                        if(param - it->st_param <= 0.05 && (part1_vmap.count(it->poorEdge.GetStart()) == 0)){ // 这里要额外：已经配对过的顶点要跳过
+                        if(param - it->st_param <= PARAM_EPSLION && (part1_vmap.count(it->poorEdge.GetStart()) == 0)){ // 这里要额外：已经配对过的顶点要跳过
                             most_right_it = it;
                         }
                         it++;

@@ -1899,7 +1899,7 @@ namespace YamadaMeshFixer{
                 auto box_point_pair = CalculateRingBox(ring);
                 T_NUM ring_box_volume = box_point_pair.first.Volume(box_point_pair.second);
 
-                SPDLOG_DEBUG("ring_box_volume / solid_box_volume > {}: ring size: {}, ring_box_volume: {}", VOLUME_PROPORTION_THRESHOLD, ring.size(),  ring_box_volume);
+                SPDLOG_DEBUG("ring_box_volume / solid_box_volume > {}: ring size: {}, ring_box_volume: {}", VOLUME_PROPORTION_THRESHOLD, ring.size(), ring_box_volume);
 
                 if(ring_box_volume / solid_box_volume > VOLUME_PROPORTION_THRESHOLD){ // 这个值合适吗
                     SPDLOG_DEBUG("ring_box_volume / solid_box_volume > {}: ring size: {}", ring.size(), VOLUME_PROPORTION_THRESHOLD);

@@ -1893,9 +1893,13 @@ namespace YamadaMeshFixer{
             // 模型的包围盒体积
             T_NUM solid_box_volume = lower_bound_coord.Volume(upper_bound_coord);
 
+            SPDLOG_DEBUG("solid_box_volume: {}", solid_box_volume);
+
             for(auto& ring: rings){
                 auto box_point_pair = CalculateRingBox(ring);
                 T_NUM ring_box_volume = box_point_pair.first.Volume(box_point_pair.second);
+
+                SPDLOG_DEBUG("ring_box_volume / solid_box_volume > {}: ring size: {}, ring_box_volume: {}", ring.size(), VOLUME_PROPORTION_THRESHOLD, ring_box_volume);
 
                 if(ring_box_volume / solid_box_volume > VOLUME_PROPORTION_THRESHOLD){ // 这个值合适吗
                     SPDLOG_DEBUG("ring_box_volume / solid_box_volume > {}: ring size: {}", ring.size(), VOLUME_PROPORTION_THRESHOLD);
@@ -1903,6 +1907,7 @@ namespace YamadaMeshFixer{
                     return false;
                 }
             }
+
 
             SPDLOG_INFO("end.");
 

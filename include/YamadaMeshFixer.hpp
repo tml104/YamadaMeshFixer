@@ -38,6 +38,7 @@ namespace YamadaMeshFixer{
 
     const T_NUM PARAM_EPSLION = 0.05; // 用于分割时配对点用的
     const T_NUM VOLUME_PROPORTION_THRESHOLD = 0.9;
+    const T_NUM VOLUME_SOLID_THRESHOLD = 1e-6;
 
   	const T_NUM MINVAL = -1e9;
 	const T_NUM MAXVAL = 1e9;
@@ -1895,6 +1896,11 @@ namespace YamadaMeshFixer{
 
             SPDLOG_DEBUG("solid_box_volume: {}", solid_box_volume);
 
+            if(solid_box_volume < VOLUME_SOLID_THRESHOLD){
+                SPDLOG_DEBUG("solid_box_volume < VOLUME_SOLID_THRESHOLD");
+                return false;
+            }
+
             for(auto& ring: rings){
                 auto box_point_pair = CalculateRingBox(ring);
                 T_NUM ring_box_volume = box_point_pair.first.Volume(box_point_pair.second);
@@ -1907,7 +1913,6 @@ namespace YamadaMeshFixer{
                     return false;
                 }
             }
-
 
             SPDLOG_INFO("end.");
 

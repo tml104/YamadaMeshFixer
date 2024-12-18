@@ -15,6 +15,8 @@ endif()
 
 set (targetName YamadaMeshFixer)
 
+add_definitions(-DTINYOBJLOADER_USE_DOUBLE)
+
 # Include directories
 include_directories(${spdlog_INCLUDE_DIRS})
 include(

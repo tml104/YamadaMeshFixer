@@ -315,7 +315,7 @@ namespace YamadaMeshFixer{
     }
 
     struct ObjInfo{
-        std::vector<float> vertices;
+        std::vector<tinyobj::real_t> vertices;
         std::vector<int> indices;
 
         std::vector<std::pair<int, int>> solidIndicesRange;

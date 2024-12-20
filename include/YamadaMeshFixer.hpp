@@ -15,6 +15,7 @@
 
 #include <iostream>
 #include <fstream>
+#include <sstream>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
@@ -38,7 +39,7 @@ namespace YamadaMeshFixer{
 
     const T_NUM PARAM_EPSLION = 0.05; // 用于分割时配对点用的
     const T_NUM VOLUME_PROPORTION_THRESHOLD = 0.9;
-    const T_NUM VOLUME_SOLID_THRESHOLD = 1e-6;
+    const T_NUM VOLUME_SOLID_THRESHOLD = 1e-12;
 
   	const T_NUM MINVAL = -1e9;
 	const T_NUM MAXVAL = 1e9;
@@ -381,6 +382,51 @@ namespace YamadaMeshFixer{
 
     };
 
+    /* 
+        由BinInfo加载半边数据结构
+        bin的数据以二进制形式存储，使用ifstream中的read和write读写
+        格式：顶点数+(x,y,z)+面数+(x_id,y_id,z_id,w), 其中w是面所属的solid id
+    */
+    struct BinInfo {
+
+        std::vector<tinyobj::real_t> vertices; // x3
+        std::map<int, std::vector<int>> solid2indices; // x3 (starts from 0)
+        
+        void LoadFromBin(const std::string& file_path){
+            std::ifstream fn(file_path, std::ios::binary);
+            int vert_num{0};
+            fn.read((char*)&vert_num, sizeof(int));
+            for(int i=0;i<vert_num;i++){
+                T_NUM x,y,z;
+                fn.read((char*)&x, sizeof(T_NUM));
+                fn.read((char*)&y, sizeof(T_NUM));
+                fn.read((char*)&z, sizeof(T_NUM));
+                
+                vertices.emplace_back(x);
+                vertices.emplace_back(y);
+                vertices.emplace_back(z);
+            }
+
+            int face_num{0};
+            fn.read((char*)&face_num, sizeof(int));
+            for(int i=0;i<face_num;i++){
+                int x,y,z,w;
+                fn.read((char*)&x, sizeof(int));
+                fn.read((char*)&y, sizeof(int));
+                fn.read((char*)&z, sizeof(int));
+                fn.read((char*)&w, sizeof(int));
+
+                solid2indices[w].emplace_back(x);
+                solid2indices[w].emplace_back(y);
+                solid2indices[w].emplace_back(z);
+            }
+        }
+
+        Coordinate GetPoint(int index){
+            return Coordinate(vertices[3*index+0], vertices[3*index+1], vertices[3*index+2]);
+        }
+    };
+
     enum class TopoType{
         NoExist = 0,
         Entity = 1,
@@ -411,6 +457,8 @@ namespace YamadaMeshFixer{
 
         std::map<Entity*, std::pair<TopoType, int>> markNumMap; // 用于由指针访问类型与对应计数
         std::vector<std::shared_ptr<Solid>> solids; // 用于访问所有实体
+
+        std::map<std::shared_ptr<Solid>, int> solid2w; // 仅当使用bin时使用，用于将solid映射到bin
 
         // std::map<TopoType, std::map<int, std::shared_ptr<Entity>>> idMap; // (TopoType, id) -> Entity*
         
@@ -552,7 +600,6 @@ namespace YamadaMeshFixer{
             };
 
             // 对于每个solid
-            int s = 0;
             for(auto solid_range: obj_info.solidIndicesRange){
                 int range_begin = solid_range.first;
                 int range_end = solid_range.second;
@@ -584,11 +631,175 @@ namespace YamadaMeshFixer{
                 auto solid = make_solid(faces);
                 solids.emplace_back(solid);
 
-                s++;
             }
 
             SPDLOG_INFO("End.");
         }
+
+        /* 
+            由BinInfo加载半边数据结构
+        */
+       void LoadFromBinInfo(BinInfo& bin_info){
+            SPDLOG_INFO("Start.");
+            Clear();
+
+            // 顶点
+            std::vector<std::shared_ptr<Vertex>> vertex_ptrs; // vertices: 顶点列表（顶点导出不能依赖于这个列表）
+
+            for(int i=0,j=0;i<bin_info.vertices.size();i+=3, j+=1){
+                auto vertex_ptr = std::make_shared<Vertex>();
+                UpdateMarkNumMap(vertex_ptr);
+                vertex_ptr->pointCoord = bin_info.GetPoint(j);
+
+                vertex_ptrs.emplace_back(vertex_ptr);
+            }
+
+            auto make_edge = [&](int i, int j) -> std::shared_ptr<Edge> {
+                
+                // 注意：这里只有map的key是需要保证有序的，而下面构造edge的时候会用到原始顺序的索引，因此这里要单独使用变量保存key
+                int search_i = i;
+                int search_j = j;
+
+                if(search_i>search_j){
+                    std::swap(search_i,search_j);
+                }
+
+                // 不存在：创建新边
+                if(auto it = edgesMap.find({search_i,search_j}); it == edgesMap.end()){
+                    std::shared_ptr<Edge> edge_ptr = std::make_shared<Edge>();
+                    UpdateMarkNumMap(edge_ptr);
+
+                    // 初始化边的信息（到时候可能要挪到函数里面）
+                    // 此处必须使用原始顶点索引
+                    edge_ptr->st = vertex_ptrs[i];
+                    edge_ptr->ed = vertex_ptrs[j];
+
+                    edgesMap[{search_i,search_j}] = edge_ptr;
+
+                    return edge_ptr;
+                }
+                // 存在：返回
+                else{
+                    return it->second;
+                }
+            };
+
+            auto make_halfedge = [&](int i, int j) -> std::shared_ptr<HalfEdge> {
+                auto edge_ptr = make_edge(i,j);
+                std::shared_ptr<HalfEdge> halfedge_ptr = std::make_shared<HalfEdge>();
+                UpdateMarkNumMap(halfedge_ptr);
+
+                // 更新halfedge的edge
+                halfedge_ptr->edge = edge_ptr;
+
+                // 更新sense
+                if(markNumMap[edge_ptr->st.get()].second == i && markNumMap[edge_ptr->ed.get()].second == j){
+                    halfedge_ptr->sense = false;
+                }else{
+                    halfedge_ptr->sense = true;
+                }
+                
+                // 添加此halfedge到edge的halfedgeList中，同时更新halfedgeList中已经有的halfedge的相邻关系
+                edge_ptr->halfEdges.emplace_back(halfedge_ptr);
+
+                // 按照halfedge添加顺序串成一个环
+                edge_ptr->UpdateHalfEdgesPartner();
+
+                return halfedge_ptr;
+            };
+
+            auto make_loop = [&](const std::shared_ptr<HalfEdge>& a, const std::shared_ptr<HalfEdge>& b, const std::shared_ptr<HalfEdge>& c) -> std::shared_ptr<Loop>{
+
+                // set next & pre
+                a->next = b;
+                a->pre = c;
+
+                b->next = c;
+                b->pre = a;
+
+                c->next = a;
+                c->pre = b;
+
+                // make loop
+                std::shared_ptr<Loop> lp = std::make_shared<Loop>();
+                UpdateMarkNumMap(lp);
+                lp->st = a;
+
+                // set 
+                a->loop = lp;
+                b->loop = lp;
+                c->loop = lp;
+
+                return lp;
+            };
+
+            auto make_face = [&](const std::shared_ptr<Loop>& lp) -> std::shared_ptr<Face>{
+                // make face
+                std::shared_ptr<Face> f = std::make_shared<Face>();
+                UpdateMarkNumMap(f);
+
+                f->st = lp;
+
+                // set lp face
+                lp->face = f;
+
+                return f;
+            };
+
+            auto make_solid = [&](const std::set<std::shared_ptr<Face>>& faces) -> std::shared_ptr<Solid>{
+
+                // make solid
+                std::shared_ptr<Solid> solid = std::make_shared<Solid>();
+                UpdateMarkNumMap(solid);
+
+                // update face solid
+                for(auto f: faces){
+                    f->solid = solid;
+                }
+
+                // copy faces vector
+                solid->faces = faces;
+
+                return solid;
+            };
+
+            // 对于每个solid
+            for(auto& w_indices_pair: bin_info.solid2indices){
+                auto& w = w_indices_pair.first;
+                auto& w_indices = w_indices_pair.second;
+
+                std::set<std::shared_ptr<Face>> faces;
+                // 对应solid的顶点范围: 每3个点的索引构成一个三角形
+
+                for(int i=0;i<w_indices.size();i+=3){
+                    int j = i+1;
+                    int k = i+2;
+
+                    int index_i = w_indices[i];
+                    int index_j = w_indices[j];
+                    int index_k = w_indices[k];
+
+                    // half edge
+                    auto halfedge_ij = make_halfedge(index_i, index_j);
+                    auto halfedge_jk = make_halfedge(index_j, index_k);
+                    auto halfedge_ki = make_halfedge(index_k, index_i);
+
+                    // loop
+                    auto loop = make_loop(halfedge_ij, halfedge_jk, halfedge_ki);
+
+                    // face
+                    auto face = make_face(loop);
+                    faces.insert(face);
+                }
+
+                // solid
+                auto solid = make_solid(faces);
+                solids.emplace_back(solid);
+                solid2w[solid] = w;
+            }
+
+            SPDLOG_INFO("End.");
+       }
 
         std::shared_ptr<Edge> FindEdgeBetweenVertices(const std::shared_ptr<Vertex>& v1, const std::shared_ptr<Vertex>& v2){
 
@@ -815,7 +1026,7 @@ namespace YamadaMeshFixer{
 
             int num = 0;
             for(auto solid: solids){
-                Export(solid, prefix+ output_path_splited2[0] + std::to_string(num++) + "." + output_path_splited2[1]);
+                ExportOBJ(solid, prefix+ output_path_splited2[0] + std::to_string(num++) + "." + output_path_splited2[1]);
             }
 
             SPDLOG_INFO("End.");
@@ -823,7 +1034,7 @@ namespace YamadaMeshFixer{
 
         // 导出
         // 这里（应该只）有一种解决方法：自己手写一个导出器
-        void Export(const std::shared_ptr<Solid>& solid, std::string output_path){
+        void ExportOBJ(const std::shared_ptr<Solid>& solid, std::string output_path){
             SPDLOG_INFO("output_path: {}", output_path);
 
             std::fstream f;
@@ -909,6 +1120,95 @@ namespace YamadaMeshFixer{
             f.close();
         }
 
+
+        void ExportBin(std::string output_path){
+            SPDLOG_INFO("Start.");
+
+            SPDLOG_INFO("output_path for bin: {}", output_path);
+
+            std::ofstream fn(output_path, std::ios::binary);
+
+            // v
+            int vertex_count = 0;
+            std::map<Vertex*, int> vertex_id_map;
+
+            auto process_vertex = [&](const std::shared_ptr<Vertex>& vertex_ptr, const std::shared_ptr<Edge>& e){
+                if(auto it = vertex_id_map.find(vertex_ptr.get()); it == vertex_id_map.end()){ // 找不到？加入！
+                    vertex_id_map[vertex_ptr.get()] = vertex_count++;
+
+                    if(auto it2 = markNumMap.find(vertex_ptr.get()); it2 == markNumMap.end()){
+                        SPDLOG_ERROR("vertex_ptr out of markNumMap!");
+                        // auto e_id = markNumMap[e.get()].second;
+                        int e_id = GetId(e);
+                        SPDLOG_DEBUG("e_id: {}", e_id);
+
+                    }
+
+                    T_NUM x = vertex_ptr->pointCoord.x();
+                    T_NUM y = vertex_ptr->pointCoord.y();
+                    T_NUM z = vertex_ptr->pointCoord.z();
+
+                    fn.write((char*)&x, sizeof(T_NUM));
+                    fn.write((char*)&y, sizeof(T_NUM));
+                    fn.write((char*)&z, sizeof(T_NUM));
+                }
+            };
+
+            for(auto solid: solids){
+                // int w = solid2w[solid];
+                for(auto face: solid->faces){
+                    auto lp = face->st;
+                    auto i_half_edge = lp->st;
+                    do{
+                        if(i_half_edge == nullptr){
+                            SPDLOG_ERROR("i_half_edge is nullptr");
+                            break;
+                        }
+                        
+                        auto e = i_half_edge->edge;
+                        process_vertex(i_half_edge->GetStart(), e);
+                        process_vertex(i_half_edge->GetEnd(), e);
+
+                        i_half_edge = i_half_edge->next;
+                    }while(i_half_edge && i_half_edge != lp->st);
+                }
+            }
+
+            SPDLOG_DEBUG("vertex_count: {}", vertex_count);
+
+            // f
+            for(auto solid: solids){
+                int w = solid2w[solid];
+                for(auto face: solid->faces){
+                    auto lp = face->st;
+                    std::vector<int> vertices_3_indices;
+                    vertices_3_indices.reserve(3);
+                    auto i_half_edge = lp->st;
+
+                    do{
+                        if(i_half_edge == nullptr){
+                            SPDLOG_ERROR("i_half_edge is nullptr");
+                            break;
+                        }
+
+                        vertices_3_indices.emplace_back(vertex_id_map[i_half_edge->GetStart().get()]);
+
+                        i_half_edge = i_half_edge->next;
+
+                    }while(i_half_edge && i_half_edge != lp->st);
+
+                    // 输出
+                    for(auto vertices_index: vertices_3_indices){
+                        fn.write((char*)&vertices_index, sizeof(int));
+                    }
+
+                    fn.write((char*)&w, sizeof(int));
+                }
+            }
+
+            SPDLOG_INFO("End.");
+        }
+
         // TODO: 刷新MarkNum
         void Refresh(){
         
@@ -918,6 +1218,7 @@ namespace YamadaMeshFixer{
             capacities.clear();
             markNumMap.clear();
             solids.clear();
+            solid2w.clear();
             deletedIdListsMap.clear();
 
             edgesMap.clear();

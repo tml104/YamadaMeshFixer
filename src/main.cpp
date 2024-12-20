@@ -20,6 +20,7 @@
 struct INPUT_ARGUMENTS{
     std::string file_path;
     std::string output_path;
+    bool is_bin;
 };
 
 int main(int argc, char const *argv[]){
@@ -32,11 +33,13 @@ int main(int argc, char const *argv[]){
 		.use_color_error()
 		.add_argument<std::string>("input_file_path", "model path")
         .add_option<std::string>("-o", "--output", "output obj path", "./output_obj.obj")
+        .add_option<bool>("-b", "--bin", "use bin", false)
         .parse(argc, argv);
 
 	INPUT_ARGUMENTS input_args;
     input_args.file_path = args_parser.get_argument<std::string>("input_file_path");
     input_args.output_path = args_parser.get_option<std::string>("-o");
+    input_args.is_bin = args_parser.get_option<bool>("-b");
 
     // set formatter
     // std::string log_name = "logs/default_log_" + Timer::GetTime() + ".log";
@@ -51,24 +54,41 @@ int main(int argc, char const *argv[]){
     spdlog::set_pattern("[%H:%M:%S %z] [%^%L%$] [thread %t] [%s] [%@] [%!] %v");
     spdlog::set_level(spdlog::level::trace);
 
-    // load obj
-    YamadaMeshFixer::ObjInfo obj_info;
-    obj_info.LoadFromObj(input_args.file_path);
+    if(input_args.is_bin){
+        // load bin
+        YamadaMeshFixer::BinInfo bin_info;
+        bin_info.LoadFromBin(input_args.file_path);
 
-    YamadaMeshFixer::MarkNum::GetInstance().LoadFromObjInfo(obj_info);
+        YamadaMeshFixer::MarkNum::GetInstance().LoadFromBinInfo(bin_info);
+        
+        for(auto solid: YamadaMeshFixer::MarkNum::GetInstance().solids){
+            YamadaMeshFixer::StitchFixer2 stitchFixer(solid);
+            stitchFixer.Start(true);
 
-    // test obj
-    // YamadaMeshFixer::MarkNum::GetInstance().Test();
+            stitchFixer.Test();
+        }
 
-
-    for(auto solid: YamadaMeshFixer::MarkNum::GetInstance().solids){
-        YamadaMeshFixer::StitchFixer2 stitchFixer(solid);
-        stitchFixer.Start(true);
-
-        stitchFixer.Test();
+        YamadaMeshFixer::MarkNum::GetInstance().ExportBin(input_args.output_path);
     }
+    else{
+        // load obj
+        YamadaMeshFixer::ObjInfo obj_info;
+        obj_info.LoadFromObj(input_args.file_path);
 
-    YamadaMeshFixer::MarkNum::GetInstance().ExportSolidsToOBJ(input_args.output_path);
+        YamadaMeshFixer::MarkNum::GetInstance().LoadFromObjInfo(obj_info);
+
+        // test obj
+        // YamadaMeshFixer::MarkNum::GetInstance().Test();
+
+        for(auto solid: YamadaMeshFixer::MarkNum::GetInstance().solids){
+            YamadaMeshFixer::StitchFixer2 stitchFixer(solid);
+            stitchFixer.Start(true);
+
+            stitchFixer.Test();
+        }
+
+        YamadaMeshFixer::MarkNum::GetInstance().ExportSolidsToOBJ(input_args.output_path);
+    }
 
     return 0;
 }

@@ -1132,6 +1132,8 @@ namespace YamadaMeshFixer{
             int vertex_count = 0;
             std::map<Vertex*, int> vertex_id_map;
 
+            std::vector<T_NUM> ans1;
+
             auto process_vertex = [&](const std::shared_ptr<Vertex>& vertex_ptr, const std::shared_ptr<Edge>& e){
                 if(auto it = vertex_id_map.find(vertex_ptr.get()); it == vertex_id_map.end()){ // 找不到？加入！
                     vertex_id_map[vertex_ptr.get()] = vertex_count++;
@@ -1148,9 +1150,12 @@ namespace YamadaMeshFixer{
                     T_NUM y = vertex_ptr->pointCoord.y();
                     T_NUM z = vertex_ptr->pointCoord.z();
 
-                    fn.write((char*)&x, sizeof(T_NUM));
-                    fn.write((char*)&y, sizeof(T_NUM));
-                    fn.write((char*)&z, sizeof(T_NUM));
+                    // fn.write((char*)&x, sizeof(T_NUM));
+                    // fn.write((char*)&y, sizeof(T_NUM));
+                    // fn.write((char*)&z, sizeof(T_NUM));
+                    ans1.emplace_back(x);
+                    ans1.emplace_back(y);
+                    ans1.emplace_back(z);
                 }
             };
 
@@ -1176,7 +1181,16 @@ namespace YamadaMeshFixer{
 
             SPDLOG_DEBUG("vertex_count: {}", vertex_count);
 
+            int nn = ans1.size()/3;
+            fn.write((char*)&nn, sizeof(int));
+
+            for(auto x: ans1){
+                fn.write((char*)&x, sizeof(T_NUM));
+            }
+
             // f
+            std::vector<int> ans2;
+
             for(auto solid: solids){
                 int w = solid2w[solid];
                 for(auto face: solid->faces){
@@ -1199,11 +1213,20 @@ namespace YamadaMeshFixer{
 
                     // 输出
                     for(auto vertices_index: vertices_3_indices){
-                        fn.write((char*)&vertices_index, sizeof(int));
+                        // fn.write((char*)&vertices_index, sizeof(int));
+                        ans2.emplace_back(vertices_index);
                     }
 
-                    fn.write((char*)&w, sizeof(int));
+                    // fn.write((char*)&w, sizeof(int));
+                    ans2.emplace_back(w);
                 }
+            }
+
+            int nnf = ans2.size()/4;
+            fn.write((char*)&nnf, sizeof(int));
+
+            for(int i: ans2){
+                fn.write((char*)&i, sizeof(int));
             }
 
             SPDLOG_INFO("End.");

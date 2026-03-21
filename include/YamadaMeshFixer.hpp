@@ -465,7 +465,7 @@ namespace YamadaMeshFixer{
         std::map<TopoType, std::list<int>> deletedIdListsMap;
 
         // 有特殊用处需要维护的数据结构
-        std::map<std::pair<int, int>, std::shared_ptr<Edge>> edgesMap; // (vertex id, vertex id（有序对）) -> edge，注意：索引是有序对！
+        std::map<std::pair<int, int>, std::vector<std::shared_ptr<Edge>>> edgesMap; // (vertex id, vertex id（有序对）) -> edges，注意：索引是有序对！
         
         // 单例
         static MarkNum& GetInstance(){
@@ -501,7 +501,7 @@ namespace YamadaMeshFixer{
                 }
 
                 // 不存在：创建新边
-                if(auto it = edgesMap.find({search_i,search_j}); it == edgesMap.end()){
+                if(auto it = edgesMap.find({search_i,search_j}); it == edgesMap.end() || it->second.empty()){
                     std::shared_ptr<Edge> edge_ptr = std::make_shared<Edge>();
                     UpdateMarkNumMap(edge_ptr);
 
@@ -510,13 +510,13 @@ namespace YamadaMeshFixer{
                     edge_ptr->st = vertex_ptrs[i];
                     edge_ptr->ed = vertex_ptrs[j];
 
-                    edgesMap[{search_i,search_j}] = edge_ptr;
+                    edgesMap[{search_i,search_j}].emplace_back(edge_ptr);
 
                     return edge_ptr;
                 }
                 // 存在：返回
                 else{
-                    return it->second;
+                    return it->second.front();
                 }
             };
 
@@ -665,7 +665,7 @@ namespace YamadaMeshFixer{
                 }
 
                 // 不存在：创建新边
-                if(auto it = edgesMap.find({search_i,search_j}); it == edgesMap.end()){
+                if(auto it = edgesMap.find({search_i,search_j}); it == edgesMap.end() || it->second.empty()){
                     std::shared_ptr<Edge> edge_ptr = std::make_shared<Edge>();
                     UpdateMarkNumMap(edge_ptr);
 
@@ -674,13 +674,13 @@ namespace YamadaMeshFixer{
                     edge_ptr->st = vertex_ptrs[i];
                     edge_ptr->ed = vertex_ptrs[j];
 
-                    edgesMap[{search_i,search_j}] = edge_ptr;
+                    edgesMap[{search_i,search_j}].emplace_back(edge_ptr);
 
                     return edge_ptr;
                 }
                 // 存在：返回
                 else{
-                    return it->second;
+                    return it->second.front();
                 }
             };
 
@@ -801,7 +801,7 @@ namespace YamadaMeshFixer{
             SPDLOG_INFO("End.");
        }
 
-        std::shared_ptr<Edge> FindEdgeBetweenVertices(const std::shared_ptr<Vertex>& v1, const std::shared_ptr<Vertex>& v2){
+        std::vector<std::shared_ptr<Edge>> FindEdgesBetweenVertices(const std::shared_ptr<Vertex>& v1, const std::shared_ptr<Vertex>& v2){
 
             int v1_id = -1, v2_id = -1;
             if(auto it = markNumMap.find(v1.get()); it != markNumMap.end()){
@@ -809,7 +809,7 @@ namespace YamadaMeshFixer{
             }
             else{
                 SPDLOG_ERROR("v1 is not exist in markNumMap.");
-                return nullptr;
+                return {};
             }
 
             if(auto it = markNumMap.find(v2.get()); it != markNumMap.end()){
@@ -817,7 +817,7 @@ namespace YamadaMeshFixer{
             }
             else{
                 SPDLOG_ERROR("v2 is not exist in markNumMap.");
-                return nullptr;
+                return {};
             }
 
             if(auto v1_v2_edge_it = edgesMap.find({v1_id, v2_id}); v1_v2_edge_it != edgesMap.end()){
@@ -828,6 +828,19 @@ namespace YamadaMeshFixer{
                 return v2_v1_edge_it->second;
             }
             
+            return {};
+        }
+
+        std::shared_ptr<Edge> FindEdgeBetweenVertices(const std::shared_ptr<Vertex>& v1, const std::shared_ptr<Vertex>& v2){
+            auto edges = FindEdgesBetweenVertices(v1, v2);
+            if(edges.size() > 1){
+                SPDLOG_WARN("FindEdgeBetweenVertices found multiple edges between vertices: {} {}", GetId(v1), GetId(v2));
+            }
+
+            if(!edges.empty()){
+                return edges.front();
+            }
+
             return nullptr;
         }
 
@@ -949,7 +962,7 @@ namespace YamadaMeshFixer{
                     std::swap(st_id, ed_id);
                 }
 
-                edgesMap[{st_id, ed_id}] = new_entity;
+                edgesMap[{st_id, ed_id}].emplace_back(new_entity);
                 SPDLOG_DEBUG("edge added: {}, {}", st_id, ed_id);
             }
         }
@@ -1005,7 +1018,17 @@ namespace YamadaMeshFixer{
             }
 
             if(auto it = edgesMap.find({st_id, ed_id}); it != edgesMap.end()){
-                edgesMap.erase(it);
+                auto& bucket = it->second;
+                auto new_end = std::remove(bucket.begin(), bucket.end(), new_entity);
+                if(new_end == bucket.end()){
+                    SPDLOG_ERROR("The edge you try to remove is no exist in edge bucket: {} {}", st_id, ed_id);
+                    return;
+                }
+
+                bucket.erase(new_end, bucket.end());
+                if(bucket.empty()){
+                    edgesMap.erase(it);
+                }
                 SPDLOG_DEBUG("edge removed: {} {}", st_id, ed_id);
             }
             else{
@@ -1639,29 +1662,28 @@ namespace YamadaMeshFixer{
 
             // 1.1 找到所有和v_b有关的边
             for (auto it = edgesMap.begin(); it != edgesMap.end(); it++){
-                auto st = it->second->st;
-                auto ed = it->second->ed;
+                bool need_change = false;
+                for(auto& edge_in_bucket: it->second){
+                    auto st = edge_in_bucket->st;
+                    auto ed = edge_in_bucket->ed;
 
-                int e_in_edgesmap_id = MarkNum::GetInstance().GetId(it->second);
+                    int e_in_edgesmap_id = MarkNum::GetInstance().GetId(edge_in_bucket);
 
-                // [Debug]
-                // if(e_in_edgesmap_id == 6834){
-                //     SPDLOG_DEBUG("e_in_edgesmap_id: {}", e_in_edgesmap_id);
-                // }
-                
-                if(st == v_b || ed == v_b){
+                    if(st == v_b || ed == v_b){
+                        need_change = true;
+                        edgesNeedToChange.emplace_back(edge_in_bucket);
+                        SPDLOG_DEBUG("edge marked as need to change: {}", e_in_edgesmap_id);
+                    }
+                }
+
+                if(need_change){
                     its.emplace_back(it);
-                    edgesNeedToChange.emplace_back(it->second);
-                    SPDLOG_DEBUG("edge marked as need to change: {}", e_in_edgesmap_id);
                 }
             }
 
             // 1.2 从edgesMap里面把所有和v_b有关的边删除掉
             for(auto it: its){
-                int e_in_edgesmap_id = MarkNum::GetInstance().GetId(it->second);
-
                 edgesMap.erase(it);
-                SPDLOG_DEBUG("edge erase from edgesMap: {}", e_in_edgesmap_id);
             }
 
             // 2. e_pre, e_next 合并为同一条边, 以及对应关系的修改
@@ -1778,9 +1800,9 @@ namespace YamadaMeshFixer{
 
                 // 这里在插入之前应该先检查一下理论上应该就ok了
                 // 如果下面的判断条件满足，那么说明当前e其实应该是要和it对应的那个边做合并的
-                if(auto it = edgesMap.find({new_st_id, new_ed_id}); it != edgesMap.end()){
+                if(auto it = edgesMap.find({new_st_id, new_ed_id}); it != edgesMap.end() && !it->second.empty()){
                     std::vector<std::shared_ptr<HalfEdge>> new_halfedges;
-                    auto e2 = it->second;
+                    auto e2 = it->second.front();
 
                     for(auto i_e_half_edge: e->halfEdges){
 
@@ -1812,7 +1834,7 @@ namespace YamadaMeshFixer{
                 }
                 else{ // 否则说明e这个边就只是和v_b相连并且没有别的边另一侧顶点也和e的另一侧顶点相同，也即收缩后不会出现重叠情况。此时正常修改即可
 
-                    edgesMap[{new_st_id, new_ed_id}] = e; 
+                    edgesMap[{new_st_id, new_ed_id}].emplace_back(e); 
                     SPDLOG_DEBUG("change e_id: {} ({} {})", e_id, new_st_id, new_ed_id);
                 }
 
@@ -1880,23 +1902,27 @@ namespace YamadaMeshFixer{
 
                 // 1.1 找到所有和v_b有关的边
                 for (auto it = edgesMap.begin(); it != edgesMap.end(); it++){
-                    auto st = it->second->st;
-                    auto ed = it->second->ed;
+                    bool need_change = false;
+                    for(auto& edge_in_bucket: it->second){
+                        auto st = edge_in_bucket->st;
+                        auto ed = edge_in_bucket->ed;
 
-                    int e_in_edgesmap_id = MarkNum::GetInstance().GetId(it->second);
-                    
-                    if(st == v_b || ed == v_b){
+                        int e_in_edgesmap_id = MarkNum::GetInstance().GetId(edge_in_bucket);
+                        
+                        if(st == v_b || ed == v_b){
+                            need_change = true;
+                            edgesNeedToChange.emplace_back(edge_in_bucket);
+                            SPDLOG_DEBUG("edge marked as need to change: {}", e_in_edgesmap_id);
+                        }
+                    }
+
+                    if(need_change){
                         its.emplace_back(it);
-                        edgesNeedToChange.emplace_back(it->second);
-                        SPDLOG_DEBUG("edge marked as need to change: {}", e_in_edgesmap_id);
                     }
                 }
                 // 1.2 从edgesMap里面把所有和v_b有关的边删除掉
                 for(auto it: its){
-                    int e_in_edgesmap_id = MarkNum::GetInstance().GetId(it->second);
-
                     edgesMap.erase(it);
-                    SPDLOG_DEBUG("edge erase from edgesMap: {}", e_in_edgesmap_id);
                 }
 
                 // 1.3 重新将没有被删除的边加回去，并对边的顶点做修改
@@ -1920,9 +1946,9 @@ namespace YamadaMeshFixer{
                     }
 
                      // 如果下面的判断条件满足，那么说明当前e其实应该是要和it对应的那个边做合并的
-                    if(auto it = edgesMap.find({new_st_id, new_ed_id}); it != edgesMap.end()){
+                    if(auto it = edgesMap.find({new_st_id, new_ed_id}); it != edgesMap.end() && !it->second.empty()){
                         std::vector<std::shared_ptr<HalfEdge>> new_halfedges;
-                        auto e2 = it->second;
+                        auto e2 = it->second.front();
 
                         for(auto i_e_half_edge: e->halfEdges){
 
@@ -1953,7 +1979,7 @@ namespace YamadaMeshFixer{
                         edgesToBeDeleted.emplace_back(e);
                     }
                     else{ // 否则说明e这个边就只是和v_b相连并且没有别的边另一侧顶点也和e的另一侧顶点相同，也即收缩后不会出现重叠情况。此时正常修改即可
-                        edgesMap[{new_st_id, new_ed_id}] = e; 
+                        edgesMap[{new_st_id, new_ed_id}].emplace_back(e); 
                         SPDLOG_DEBUG("change e_id: {} ({} {})", e_id, new_st_id, new_ed_id);
                     }
 
@@ -2969,6 +2995,462 @@ namespace YamadaMeshFixer{
             }
         }
 
+    };
+
+    struct NonmanifoldFixer{
+    public:
+        std::shared_ptr<Solid> solid_ptr;
+        std::vector<std::shared_ptr<Edge>> nonmanifoldEdges;
+        std::map<std::shared_ptr<Edge>, std::map<int, std::vector<std::shared_ptr<HalfEdge>>>> groupedHalfEdges;
+        std::map<std::shared_ptr<Edge>, std::set<std::shared_ptr<Face>>> oneRingFacesMap;
+        std::map<std::shared_ptr<Edge>, std::set<std::shared_ptr<Edge>>> oneRingEdgesMap;
+        std::set<std::shared_ptr<Edge>> globalRelevantEdges;
+        std::set<std::shared_ptr<Face>> globalRelevantFaces;
+        std::set<std::shared_ptr<Vertex>> nonmanifoldVertices;
+        std::map<std::shared_ptr<Face>, int> faceGroupIdMap;
+        std::map<std::shared_ptr<Edge>, std::map<int, std::vector<std::shared_ptr<HalfEdge>>>> edgeGroupHalfEdges;
+        std::map<std::shared_ptr<Edge>, std::set<std::shared_ptr<Edge>>> nonmanifoldGraph;
+        std::map<std::shared_ptr<Vertex>, std::map<int, std::shared_ptr<Vertex>>> createdVerticesByGroup;
+
+        NonmanifoldFixer(const std::shared_ptr<Solid>& solid): solid_ptr(solid){}
+
+        bool Start(bool call_fix){
+            SPDLOG_INFO("Start.");
+
+            Clear();
+            FindNonmanifoldEdges();
+            CollectOneRingEntities();
+            GroupNonmanifoldHalfEdges();
+            BuildNonmanifoldGraph();
+            if(call_fix){
+                FixNonmanifoldEdges();
+            }
+
+            SPDLOG_INFO("End.");
+            return !nonmanifoldEdges.empty();
+        }
+
+        void Clear(){
+            nonmanifoldEdges.clear();
+            groupedHalfEdges.clear();
+            oneRingFacesMap.clear();
+            oneRingEdgesMap.clear();
+            globalRelevantEdges.clear();
+            globalRelevantFaces.clear();
+            nonmanifoldVertices.clear();
+            faceGroupIdMap.clear();
+            edgeGroupHalfEdges.clear();
+            nonmanifoldGraph.clear();
+            createdVerticesByGroup.clear();
+        }
+
+        void Status(){
+            SPDLOG_INFO("nonmanifold edge count: {}", nonmanifoldEdges.size());
+        }
+
+        void Test(){
+            SPDLOG_INFO("start.");
+
+            int nonmanifold_edge_count = 0;
+            std::set<std::shared_ptr<Edge>> visited_edges;
+
+            for(auto f: solid_ptr->faces){
+                auto lp = f->st;
+                auto i_half_edge = lp->st;
+
+                do{
+                    if(i_half_edge == nullptr){
+                        SPDLOG_ERROR("i_half_edge is null");
+                        break;
+                    }
+                    if(i_half_edge->edge == nullptr){
+                        SPDLOG_ERROR("halfedge has no edge: {}", MarkNum::GetInstance().GetId(i_half_edge));
+                        i_half_edge = i_half_edge->next;
+                        continue;
+                    }
+                    if(i_half_edge->loop == nullptr){
+                        SPDLOG_ERROR("halfedge has no loop: {}", MarkNum::GetInstance().GetId(i_half_edge));
+                    }
+                    if(i_half_edge->GetStart() == nullptr){
+                        SPDLOG_ERROR("halfedge has no start: {}", MarkNum::GetInstance().GetId(i_half_edge));
+                    }
+                    if(i_half_edge->GetEnd() == nullptr){
+                        SPDLOG_ERROR("halfedge has no end: {}", MarkNum::GetInstance().GetId(i_half_edge));
+                    }
+
+                    if(visited_edges.insert(i_half_edge->edge).second){
+                        if(GeometryUtils::EdgePartnerCount(i_half_edge->edge) > 2){
+                            nonmanifold_edge_count++;
+                        }
+                    }
+
+                    i_half_edge = i_half_edge->next;
+                }while(i_half_edge && i_half_edge != lp->st);
+            }
+
+            SPDLOG_INFO("nonmanifold edge total num (>2 partners): {}", nonmanifold_edge_count);
+            SPDLOG_INFO("end.");
+        }
+
+    private:
+        void FindNonmanifoldEdges(){
+            std::set<std::shared_ptr<Edge>> visited_edges;
+
+            for(auto f: solid_ptr->faces){
+                auto lp = f->st;
+                auto i_half_edge = lp->st;
+
+                do{
+                    if(i_half_edge == nullptr){
+                        SPDLOG_ERROR("i_half_edge is null");
+                        break;
+                    }
+
+                    auto e = i_half_edge->edge;
+                    if(e != nullptr && visited_edges.insert(e).second){
+                        if(GeometryUtils::EdgePartnerCount(e) > 2){
+                            nonmanifoldEdges.emplace_back(e);
+                            if(e->st != nullptr){
+                                nonmanifoldVertices.insert(e->st);
+                            }
+                            if(e->ed != nullptr){
+                                nonmanifoldVertices.insert(e->ed);
+                            }
+                        }
+                    }
+
+                    i_half_edge = i_half_edge->next;
+                }while(i_half_edge && i_half_edge != lp->st);
+            }
+        }
+
+        std::shared_ptr<Face> GetHalfEdgeFace(const std::shared_ptr<HalfEdge>& half_edge) const {
+            if(half_edge == nullptr || half_edge->loop == nullptr){
+                return nullptr;
+            }
+            return half_edge->loop->face;
+        }
+
+        void TraverseFaceHalfEdges(
+            const std::shared_ptr<Face>& face,
+            const std::function<void(const std::shared_ptr<HalfEdge>&)>& fn) const {
+
+            if(face == nullptr || face->st == nullptr || face->st->st == nullptr){
+                SPDLOG_ERROR("face loop topology is incomplete");
+                return;
+            }
+
+            auto start_half_edge = face->st->st;
+            auto i_half_edge = start_half_edge;
+
+            do{
+                if(i_half_edge == nullptr){
+                    SPDLOG_ERROR("i_half_edge is null");
+                    break;
+                }
+
+                fn(i_half_edge);
+                i_half_edge = i_half_edge->next;
+            }while(i_half_edge && i_half_edge != start_half_edge);
+        }
+
+        void CollectOneRingEntities(){
+            for(auto& edge: nonmanifoldEdges){
+                auto& one_ring_faces = oneRingFacesMap[edge];
+                auto& one_ring_edges = oneRingEdgesMap[edge];
+
+                for(auto& half_edge: edge->halfEdges){
+                    auto face = GetHalfEdgeFace(half_edge);
+                    if(face != nullptr){
+                        one_ring_faces.insert(face);
+                    }
+                }
+
+                for(auto& face: solid_ptr->faces){
+                    TraverseFaceHalfEdges(face, [&](const std::shared_ptr<HalfEdge>& half_edge){
+                        if(half_edge == nullptr || half_edge->edge == nullptr){
+                            return;
+                        }
+
+                        auto adjacent_edge = half_edge->edge;
+                        if(adjacent_edge == edge){
+                            return;
+                        }
+
+                        if(adjacent_edge->st == edge->st || adjacent_edge->st == edge->ed ||
+                           adjacent_edge->ed == edge->st || adjacent_edge->ed == edge->ed){
+                            one_ring_edges.insert(adjacent_edge);
+                        }
+                    });
+                }
+
+                globalRelevantEdges.insert(edge);
+                globalRelevantEdges.insert(one_ring_edges.begin(), one_ring_edges.end());
+                globalRelevantFaces.insert(one_ring_faces.begin(), one_ring_faces.end());
+            }
+
+            // 为relevant edge上的所有halfedge补齐所属面，保证后续全局分组和重建时能覆盖完整拓扑。
+            for(auto& edge: globalRelevantEdges){
+                for(auto& half_edge: edge->halfEdges){
+                    auto face = GetHalfEdgeFace(half_edge);
+                    if(face != nullptr){
+                        globalRelevantFaces.insert(face);
+                    }
+                }
+            }
+        }
+
+        void GroupNonmanifoldHalfEdges(){
+            faceGroupIdMap.clear();
+            edgeGroupHalfEdges.clear();
+            groupedHalfEdges.clear();
+
+            if(globalRelevantFaces.empty()){
+                return;
+            }
+
+            std::unordered_map<Face*, Face*> parent;
+
+            for(auto& face: globalRelevantFaces){
+                parent[face.get()] = face.get();
+            }
+
+            std::function<Face*(Face*)> find_root = [&](Face* face_ptr) -> Face* {
+                auto it = parent.find(face_ptr);
+                if(it == parent.end()){
+                    return nullptr;
+                }
+                if(it->second == face_ptr){
+                    return face_ptr;
+                }
+                it->second = find_root(it->second);
+                return it->second;
+            };
+
+            auto union_face = [&](Face* a, Face* b){
+                auto root_a = find_root(a);
+                auto root_b = find_root(b);
+                if(root_a != nullptr && root_b != nullptr && root_a != root_b){
+                    parent[root_b] = root_a;
+                }
+            };
+
+            for(auto& edge: globalRelevantEdges){
+                if(edge == nullptr || GeometryUtils::EdgePartnerCount(edge) != 2){
+                    continue;
+                }
+
+                Face* face_a = nullptr;
+                Face* face_b = nullptr;
+
+                for(auto& half_edge: edge->halfEdges){
+                    auto face = GetHalfEdgeFace(half_edge);
+                    if(face == nullptr){
+                        continue;
+                    }
+
+                    if(parent.find(face.get()) == parent.end()){
+                        continue;
+                    }
+
+                    if(face_a == nullptr){
+                        face_a = face.get();
+                    }
+                    else if(face_b == nullptr && face_a != face.get()){
+                        face_b = face.get();
+                    }
+                }
+
+                if(face_a != nullptr && face_b != nullptr){
+                    union_face(face_a, face_b);
+                }
+            }
+
+            std::unordered_map<Face*, int> root_to_group_id;
+            int next_group_id = 0;
+            for(auto& face: globalRelevantFaces){
+                auto root = find_root(face.get());
+                if(root == nullptr){
+                    continue;
+                }
+                if(root_to_group_id.find(root) == root_to_group_id.end()){
+                    root_to_group_id[root] = next_group_id++;
+                }
+                faceGroupIdMap[face] = root_to_group_id[root];
+            }
+
+            for(auto& edge: globalRelevantEdges){
+                auto& grouped_half_edges = edgeGroupHalfEdges[edge];
+                for(auto& half_edge: edge->halfEdges){
+                    auto face = GetHalfEdgeFace(half_edge);
+                    if(face == nullptr){
+                        SPDLOG_ERROR("relevant edge halfedge has incomplete topology: {}", MarkNum::GetInstance().GetId(edge));
+                        continue;
+                    }
+
+                    auto group_it = faceGroupIdMap.find(face);
+                    if(group_it == faceGroupIdMap.end()){
+                        SPDLOG_ERROR("face group id is missing for face: {}", MarkNum::GetInstance().GetId(face));
+                        continue;
+                    }
+
+                    grouped_half_edges[group_it->second].emplace_back(half_edge);
+                }
+            }
+
+            for(auto& edge: nonmanifoldEdges){
+                auto groups_it = edgeGroupHalfEdges.find(edge);
+                if(groups_it != edgeGroupHalfEdges.end()){
+                    groupedHalfEdges[edge] = groups_it->second;
+                }
+
+                auto& groups = groupedHalfEdges[edge];
+
+                SPDLOG_INFO("Nonmanifold edge {} grouped into {} groups. one_ring_face_count: {} one_ring_edge_count: {} edge_st: {} edge_ed: {}",
+                    MarkNum::GetInstance().GetId(edge),
+                    groups.size(),
+                    oneRingFacesMap[edge].size(),
+                    oneRingEdgesMap[edge].size(),
+                    MarkNum::GetInstance().GetId(edge->st),
+                    MarkNum::GetInstance().GetId(edge->ed)
+                );
+
+                for(auto& group_pair: groups){
+                    auto group_id = group_pair.first;
+                    auto& group = group_pair.second;
+                    SPDLOG_INFO("  group {} halfedge_count: {}", group_id, group.size());
+
+                    for(auto& half_edge: group){
+                        auto face = GetHalfEdgeFace(half_edge);
+                        auto he_start = (half_edge != nullptr) ? half_edge->GetStart() : nullptr;
+                        auto he_end = (half_edge != nullptr) ? half_edge->GetEnd() : nullptr;
+
+                        SPDLOG_INFO("    halfedge_id: {} face_id: {} st: {} ed: {} sense: {}",
+                            MarkNum::GetInstance().GetId(half_edge),
+                            MarkNum::GetInstance().GetId(face),
+                            MarkNum::GetInstance().GetId(he_start),
+                            MarkNum::GetInstance().GetId(he_end),
+                            (half_edge != nullptr ? half_edge->sense : false)
+                        );
+                    }
+                }
+            }
+        }
+
+        void BuildNonmanifoldGraph(){
+            nonmanifoldGraph.clear();
+
+            std::unordered_map<Vertex*, std::vector<std::shared_ptr<Edge>>> vertex_to_nonmanifold_edges;
+            for(auto& edge: nonmanifoldEdges){
+                if(edge->st != nullptr){
+                    vertex_to_nonmanifold_edges[edge->st.get()].emplace_back(edge);
+                }
+                if(edge->ed != nullptr){
+                    vertex_to_nonmanifold_edges[edge->ed.get()].emplace_back(edge);
+                }
+            }
+
+            for(auto& vertex_pair: vertex_to_nonmanifold_edges){
+                auto& incident_nonmanifold_edges = vertex_pair.second;
+                for(size_t i = 0; i < incident_nonmanifold_edges.size(); ++i){
+                    for(size_t j = i + 1; j < incident_nonmanifold_edges.size(); ++j){
+                        nonmanifoldGraph[incident_nonmanifold_edges[i]].insert(incident_nonmanifold_edges[j]);
+                        nonmanifoldGraph[incident_nonmanifold_edges[j]].insert(incident_nonmanifold_edges[i]);
+                    }
+                }
+            }
+        }
+
+        std::shared_ptr<Vertex> GetOrCreateGroupVertex(const std::shared_ptr<Vertex>& original_vertex, int group_id){
+            if(original_vertex == nullptr){
+                return nullptr;
+            }
+
+            if(nonmanifoldVertices.find(original_vertex) == nonmanifoldVertices.end()){
+                return original_vertex;
+            }
+
+            auto& grouped_vertices = createdVerticesByGroup[original_vertex];
+            if(auto it = grouped_vertices.find(group_id); it != grouped_vertices.end()){
+                return it->second;
+            }
+
+            auto new_vertex = std::make_shared<Vertex>();
+            new_vertex->pointCoord = original_vertex->pointCoord;
+            MarkNum::GetInstance().AddEntity(new_vertex);
+            grouped_vertices[group_id] = new_vertex;
+
+            return new_vertex;
+        }
+
+        void FixNonmanifoldEdges(){
+            auto edges_to_fix = std::vector<std::shared_ptr<Edge>>(globalRelevantEdges.begin(), globalRelevantEdges.end());
+            std::set<std::shared_ptr<Edge>> nonmanifold_edge_set(nonmanifoldEdges.begin(), nonmanifoldEdges.end());
+
+            for(auto& old_edge: edges_to_fix){
+                if(MarkNum::GetInstance().markNumMap.find(old_edge.get()) == MarkNum::GetInstance().markNumMap.end()){
+                    continue;
+                }
+
+                auto grouped_it = edgeGroupHalfEdges.find(old_edge);
+                if(grouped_it == edgeGroupHalfEdges.end() || grouped_it->second.empty()){
+                    continue;
+                }
+
+                auto old_edge_id = MarkNum::GetInstance().GetId(old_edge);
+                auto& groups = grouped_it->second;
+                std::map<int, std::shared_ptr<Edge>> created_edges_by_group;
+
+                for(auto& group_pair: groups){
+                    auto group_id = group_pair.first;
+                    auto& halfedge_group = group_pair.second;
+                    if(halfedge_group.empty()){
+                        continue;
+                    }
+
+                    auto new_edge = std::make_shared<Edge>();
+                    new_edge->st = GetOrCreateGroupVertex(old_edge->st, group_id);
+                    new_edge->ed = GetOrCreateGroupVertex(old_edge->ed, group_id);
+
+                    for(auto& half_edge: halfedge_group){
+                        if(half_edge == nullptr){
+                            continue;
+                        }
+                        half_edge->edge = new_edge;
+                        new_edge->AddHalfEdge(half_edge);
+                    }
+
+                    new_edge->UpdateHalfEdgesPartner();
+                    MarkNum::GetInstance().AddEntity(new_edge);
+                    created_edges_by_group[group_id] = new_edge;
+                }
+
+                old_edge->halfEdges.clear();
+                MarkNum::GetInstance().RemoveEntity(old_edge);
+
+                if(nonmanifold_edge_set.find(old_edge) != nonmanifold_edge_set.end()){
+                    SPDLOG_INFO("Nonmanifold edge {} repaired. group_count: {} one_ring_face_count: {} one_ring_edge_count: {}",
+                        old_edge_id,
+                        groups.size(),
+                        oneRingFacesMap[old_edge].size(),
+                        oneRingEdgesMap[old_edge].size()
+                    );
+
+                    for(auto& group_pair: created_edges_by_group){
+                        auto group_id = group_pair.first;
+                        auto& new_edge = group_pair.second;
+
+                        SPDLOG_INFO("  group {} new_edge: {} st: {} ed: {} halfedge_count: {}",
+                            group_id,
+                            MarkNum::GetInstance().GetId(new_edge),
+                            MarkNum::GetInstance().GetId(new_edge->st),
+                            MarkNum::GetInstance().GetId(new_edge->ed),
+                            new_edge->halfEdges.size()
+                        );
+                    }
+                }
+            }
+        }
     };
 
 }

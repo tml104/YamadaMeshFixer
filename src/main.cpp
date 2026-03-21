@@ -79,12 +79,20 @@ int main(int argc, char const *argv[]){
 
         // test obj
         // YamadaMeshFixer::MarkNum::GetInstance().Test();
-
+#if 0
         for(auto solid: YamadaMeshFixer::MarkNum::GetInstance().solids){
             YamadaMeshFixer::StitchFixer2 stitchFixer(solid);
             stitchFixer.Start(true);
 
             stitchFixer.Test();
+        }
+#endif
+
+        for(auto solid: YamadaMeshFixer::MarkNum::GetInstance().solids){
+            YamadaMeshFixer::NonmanifoldFixer nonmanifoldFixer(solid);
+            nonmanifoldFixer.Start(true); 
+
+            nonmanifoldFixer.Test();
         }
 
         YamadaMeshFixer::MarkNum::GetInstance().ExportSolidsToOBJ(input_args.output_path);

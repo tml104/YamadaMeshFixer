@@ -475,7 +475,7 @@ namespace YamadaMeshFixer{
 
         // 由ObjInfo加载半边数据结构
         void LoadFromObjInfo(ObjInfo& obj_info){
-            SPDLOG_INFO("Start.");
+            SPDLOG_DEBUG("Start.");
 
             Clear();
 
@@ -633,7 +633,7 @@ namespace YamadaMeshFixer{
 
             }
 
-            SPDLOG_INFO("End.");
+            SPDLOG_DEBUG("End.");
         }
 
         /* 
@@ -2083,7 +2083,7 @@ namespace YamadaMeshFixer{
         }
 
         void Test(){
-            SPDLOG_INFO("start.");
+            SPDLOG_DEBUG("start.");
 
             // 先临时弄成循环遍历那样？
             int poor_coedge_count[11];
@@ -3015,7 +3015,7 @@ namespace YamadaMeshFixer{
         NonmanifoldFixer(const std::shared_ptr<Solid>& solid): solid_ptr(solid){}
 
         bool Start(bool call_fix){
-            SPDLOG_INFO("Start.");
+            SPDLOG_DEBUG("Start.");
 
             Clear();
             FindNonmanifoldEdges();
@@ -3026,7 +3026,7 @@ namespace YamadaMeshFixer{
                 FixNonmanifoldEdges();
             }
 
-            SPDLOG_INFO("End.");
+            SPDLOG_DEBUG("End.");
             return !nonmanifoldEdges.empty();
         }
 
@@ -3049,7 +3049,7 @@ namespace YamadaMeshFixer{
         }
 
         void Test(){
-            SPDLOG_INFO("start.");
+            SPDLOG_DEBUG("start.");
 
             int nonmanifold_edge_count = 0;
             std::set<std::shared_ptr<Edge>> visited_edges;
@@ -3089,7 +3089,7 @@ namespace YamadaMeshFixer{
             }
 
             SPDLOG_INFO("nonmanifold edge total num (>2 partners): {}", nonmanifold_edge_count);
-            SPDLOG_INFO("end.");
+            SPDLOG_DEBUG("end.");
         }
 
     private:
@@ -3306,7 +3306,7 @@ namespace YamadaMeshFixer{
 
                 auto& groups = groupedHalfEdges[edge];
 
-                SPDLOG_INFO("Nonmanifold edge {} grouped into {} groups. one_ring_face_count: {} one_ring_edge_count: {} edge_st: {} edge_ed: {}",
+                SPDLOG_DEBUG("Nonmanifold edge {} grouped into {} groups. one_ring_face_count: {} one_ring_edge_count: {} edge_st: {} edge_ed: {}",
                     MarkNum::GetInstance().GetId(edge),
                     groups.size(),
                     oneRingFacesMap[edge].size(),
@@ -3318,14 +3318,14 @@ namespace YamadaMeshFixer{
                 for(auto& group_pair: groups){
                     auto group_id = group_pair.first;
                     auto& group = group_pair.second;
-                    SPDLOG_INFO("  group {} halfedge_count: {}", group_id, group.size());
+                    SPDLOG_DEBUG("  group {} halfedge_count: {}", group_id, group.size());
 
                     for(auto& half_edge: group){
                         auto face = GetHalfEdgeFace(half_edge);
                         auto he_start = (half_edge != nullptr) ? half_edge->GetStart() : nullptr;
                         auto he_end = (half_edge != nullptr) ? half_edge->GetEnd() : nullptr;
 
-                        SPDLOG_INFO("    halfedge_id: {} face_id: {} st: {} ed: {} sense: {}",
+                        SPDLOG_DEBUG("    halfedge_id: {} face_id: {} st: {} ed: {} sense: {}",
                             MarkNum::GetInstance().GetId(half_edge),
                             MarkNum::GetInstance().GetId(face),
                             MarkNum::GetInstance().GetId(he_start),
@@ -3429,7 +3429,7 @@ namespace YamadaMeshFixer{
                 MarkNum::GetInstance().RemoveEntity(old_edge);
 
                 if(nonmanifold_edge_set.find(old_edge) != nonmanifold_edge_set.end()){
-                    SPDLOG_INFO("Nonmanifold edge {} repaired. group_count: {} one_ring_face_count: {} one_ring_edge_count: {}",
+                    SPDLOG_DEBUG("Nonmanifold edge {} repaired. group_count: {} one_ring_face_count: {} one_ring_edge_count: {}",
                         old_edge_id,
                         groups.size(),
                         oneRingFacesMap[old_edge].size(),
@@ -3440,7 +3440,7 @@ namespace YamadaMeshFixer{
                         auto group_id = group_pair.first;
                         auto& new_edge = group_pair.second;
 
-                        SPDLOG_INFO("  group {} new_edge: {} st: {} ed: {} halfedge_count: {}",
+                        SPDLOG_DEBUG("  group {} new_edge: {} st: {} ed: {} halfedge_count: {}",
                             group_id,
                             MarkNum::GetInstance().GetId(new_edge),
                             MarkNum::GetInstance().GetId(new_edge->st),

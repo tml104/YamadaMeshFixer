@@ -52,7 +52,7 @@ int main(int argc, char const *argv[]){
     spdlog::set_default_logger(file_logger);
 
     spdlog::set_pattern("[%H:%M:%S %z] [%^%L%$] [thread %t] [%s] [%@] [%!] %v");
-    spdlog::set_level(spdlog::level::trace);
+    spdlog::set_level(spdlog::level::info);
 
     if(input_args.is_bin){
         // load bin
@@ -90,7 +90,7 @@ int main(int argc, char const *argv[]){
 
         for(auto solid: YamadaMeshFixer::MarkNum::GetInstance().solids){
             YamadaMeshFixer::NonmanifoldFixer nonmanifoldFixer(solid);
-            nonmanifoldFixer.Start(true); 
+            nonmanifoldFixer.Start(false); 
 
             nonmanifoldFixer.Test();
         }
